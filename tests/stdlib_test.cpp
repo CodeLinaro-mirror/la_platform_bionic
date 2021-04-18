@@ -456,12 +456,12 @@ TEST_F(stdlib_DeathTest, getenv_after_main_thread_exits) {
 
 TEST(stdlib, mkostemp64) {
   MyTemporaryFile tf([](char* path) { return mkostemp64(path, O_CLOEXEC); });
-  AssertCloseOnExec(tf.fd, true);
+  ASSERT_TRUE(CloseOnExec(tf.fd));
 }
 
 TEST(stdlib, mkostemp) {
   MyTemporaryFile tf([](char* path) { return mkostemp(path, O_CLOEXEC); });
-  AssertCloseOnExec(tf.fd, true);
+  ASSERT_TRUE(CloseOnExec(tf.fd));
 }
 
 TEST(stdlib, mkstemp64) {
@@ -487,6 +487,12 @@ TEST(stdlib, system) {
   status = system("exit 1");
   ASSERT_TRUE(WIFEXITED(status));
   ASSERT_EQ(1, WEXITSTATUS(status));
+}
+
+TEST(stdlib, system_NULL) {
+  // "The system() function shall always return non-zero when command is NULL."
+  // http://pubs.opengroup.org/onlinepubs/9699919799/functions/system.html
+  ASSERT_NE(0, system(nullptr));
 }
 
 TEST(stdlib, atof) {

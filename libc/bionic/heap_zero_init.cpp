@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 The Android Open Source Project
+ * Copyright (C) 2020 The Android Open Source Project
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,6 +26,14 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/eventfd.h>
-#include <unistd.h>
+#include "heap_zero_init.h"
 
+extern "C" void scudo_malloc_set_zero_contents(int zero_contents);
+
+bool SetHeapZeroInitialize(bool zero_init __attribute__((__unused__))) {
+#ifdef USE_SCUDO
+  scudo_malloc_set_zero_contents(zero_init);
+  return true;
+#endif
+  return false;
+}

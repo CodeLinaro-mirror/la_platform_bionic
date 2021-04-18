@@ -14,6 +14,10 @@
 // limitations under the License.
 //
 
+package {
+    default_applicable_licenses: ["bionic_tests_license"],
+}
+
 cc_defaults {
     name: "bionic_testlib_defaults",
     host_supported: true,
@@ -1478,6 +1482,8 @@ cc_test_library {
     srcs: ["ld_config_test_helper_lib1.cpp"],
     shared_libs: ["ld_config_test_helper_lib2"],
     relative_install_path: "bionic-loader-test-libs/ns2",
+    // Mark the library DF_1_GLOBAL so it is added to every linker namespace.
+    ldflags: ["-Wl,-z,global"]
 }
 
 cc_test_library {
