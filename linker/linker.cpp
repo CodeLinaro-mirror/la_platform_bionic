@@ -24,7 +24,11 @@
  * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
  * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
+ * Changes from Qualcomm Technologies, Inc. are provided under the following license:
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries. 
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
+
 
 #include <android/api-level.h>
 #include <errno.h>
@@ -101,6 +105,7 @@ static const char* const kLdGeneratedConfigFilePath = "/linkerconfig/ld.config.t
 static const char* const kSystemLibDir        = "/system/lib64";
 static const char* const kOdmLibDir           = "/odm/lib64";
 static const char* const kVendorLibDir        = "/vendor/lib64";
+static const char* const kEarlyLibDir         = "/vendor_early_services/system/lib64";
 static const char* const kAsanSystemLibDir    = "/data/asan/system/lib64";
 static const char* const kAsanOdmLibDir       = "/data/asan/odm/lib64";
 static const char* const kAsanVendorLibDir    = "/data/asan/vendor/lib64";
@@ -108,6 +113,7 @@ static const char* const kAsanVendorLibDir    = "/data/asan/vendor/lib64";
 static const char* const kSystemLibDir        = "/system/lib";
 static const char* const kOdmLibDir           = "/odm/lib";
 static const char* const kVendorLibDir        = "/vendor/lib";
+static const char* const kEarlyLibDir         = "/vendor_early_services/system/lib";
 static const char* const kAsanSystemLibDir    = "/data/asan/system/lib";
 static const char* const kAsanOdmLibDir       = "/data/asan/odm/lib";
 static const char* const kAsanVendorLibDir    = "/data/asan/vendor/lib";
@@ -119,6 +125,7 @@ static const char* const kDefaultLdPaths[] = {
   kSystemLibDir,
   kOdmLibDir,
   kVendorLibDir,
+  kEarlyLibDir,
   nullptr
 };
 
@@ -129,6 +136,7 @@ static const char* const kAsanDefaultLdPaths[] = {
   kOdmLibDir,
   kAsanVendorLibDir,
   kVendorLibDir,
+  kEarlyLibDir,
   nullptr
 };
 
