@@ -67,6 +67,13 @@ libc_common_flags = [
 
     // GWP-ASan requires platform TLS.
     "-fno-emulated-tls",
+
+    // We know clang does a lot of harm by rewriting what we've said, and sadly
+    // never see any good it does, so let's just ask it to do what we say...
+    // (The specific motivating example was clang turning a loop that would only
+    // ever touch 0, 1, or 2 bytes into a call to memset, which was never going
+    // to amortize.)
+    "-fno-builtin",
 ]
 
 // Define some common cflags
@@ -121,6 +128,10 @@ cc_defaults {
         malloc_not_svelte: {
             cflags: ["-DUSE_SCUDO"],
         },
+    },
+
+    lto: {
+        never: true,
     },
 }
 
@@ -1054,6 +1065,7 @@ cc_library_static {
         "bionic/error.cpp",
         "bionic/eventfd.cpp",
         "bionic/exec.cpp",
+        "bionic/execinfo.cpp",
         "bionic/faccessat.cpp",
         "bionic/fchmod.cpp",
         "bionic/fchmodat.cpp",
@@ -1121,6 +1133,7 @@ cc_library_static {
         "bionic/posix_fallocate.cpp",
         "bionic/posix_madvise.cpp",
         "bionic/posix_timers.cpp",
+        "bionic/preadv_pwritev.cpp",
         "bionic/ptrace.cpp",
         "bionic/pty.cpp",
         "bionic/raise.cpp",
@@ -1780,8 +1793,12 @@ cc_library {
         "com.android.runtime",
     ],
 
-    lto: {
-        never: true,
+    target: {
+        native_bridge: {
+            shared: {
+                installable: false,
+            },
+        },
     },
 }
 

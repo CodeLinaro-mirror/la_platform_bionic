@@ -474,6 +474,9 @@ cc_test_library {
                 // musl doesn't have error.h
                 "error_test.cpp",
 
+                // musl doesn't have execinfo.h
+                "execinfo_test.cpp",
+
                 // musl doesn't define noreturn for C++
                 "stdnoreturn_test.cpp",
 
@@ -738,13 +741,13 @@ cc_test_library {
     name: "libBionicLoaderTests",
     defaults: [
         "bionic_tests_defaults",
-        "llvm-defaults",
     ],
     srcs: [
         "atexit_test.cpp",
         "dl_test.cpp",
         "dlfcn_symlink_support.cpp",
         "dlfcn_test.cpp",
+        "execinfo_test.cpp",
         "link_test.cpp",
         "pthread_dlfcn_test.cpp",
     ],
@@ -768,12 +771,6 @@ cc_test_library {
                 "libmeminfo",
                 "libprocinfo",
                 "libziparchive",
-                "libLLVMObject",
-                "libLLVMBitReader",
-                "libLLVMMC",
-                "libLLVMMCParser",
-                "libLLVMCore",
-                "libLLVMSupport",
             ],
         },
     },
@@ -863,12 +860,6 @@ cc_defaults {
                 "libziparchive",
                 "libz",
                 "libutils",
-                "libLLVMObject",
-                "libLLVMBitReader",
-                "libLLVMMC",
-                "libLLVMMCParser",
-                "libLLVMCore",
-                "libLLVMSupport",
             ],
             ldflags: [
                 "-Wl,--rpath,${ORIGIN}/bionic-loader-test-libs",
@@ -1124,6 +1115,11 @@ cc_test {
 
     static_executable: true,
     stl: "libc++_static",
+    // Clang cannot build ifunc with LTO.
+    // http://b/203737712
+    lto: {
+        never: true,
+    },
 }
 
 // -----------------------------------------------------------------------------
@@ -1141,6 +1137,7 @@ cc_test_host {
         "dlfcn_symlink_support.cpp",
         "dlfcn_test.cpp",
         "dl_test.cpp",
+        "execinfo_test.cpp",
         "gtest_globals.cpp",
         "gtest_main.cpp",
         "pthread_dlfcn_test.cpp",
