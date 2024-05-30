@@ -201,6 +201,7 @@ struct ExecutableInfo {
   const ElfW(Phdr)* phdr;
   size_t phdr_count;
   ElfW(Addr) entry_point;
+  bool should_pad_segments;
 };
 
 static ExecutableInfo get_executable_info(const char* arg_path) {
@@ -293,6 +294,7 @@ static ExecutableInfo load_executable(const char* orig_path) {
   result.phdr = elf_reader.loaded_phdr();
   result.phdr_count = elf_reader.phdr_count();
   result.entry_point = elf_reader.entry_point();
+  result.should_pad_segments = elf_reader.should_pad_segments();
   return result;
 }
 
@@ -366,6 +368,7 @@ static ElfW(Addr) linker_main(KernelArgumentBlock& args, const char* exe_to_load
   somain = si;
   si->phdr = exe_info.phdr;
   si->phnum = exe_info.phdr_count;
+  si->set_should_pad_segments(exe_info.should_pad_segments);
   get_elf_base_from_phdr(si->phdr, si->phnum, &si->base, &si->load_bias);
   si->size = phdr_table_get_load_size(si->phdr, si->phnum);
   si->dynamic = nullptr;
@@ -399,14 +402,11 @@ static ElfW(Addr) linker_main(KernelArgumentBlock& args, const char* exe_to_load
     auto note_gnu_property = GnuPropertySection(somain);
     if (note_gnu_property.IsBTICompatible() &&
         (phdr_table_protect_segments(somain->phdr, somain->phnum, somain->load_bias,
-                                     &note_gnu_property) < 0)) {
+                                     somain->should_pad_segments(), &note_gnu_property) < 0)) {
       __linker_error("error: can't protect segments for \"%s\": %s", exe_info.path.c_str(),
                      strerror(errno));
     }
   }
-
-  __libc_init_mte(somain->memtag_dynamic_entries(), somain->phdr, somain->phnum, somain->load_bias,
-                  args.argv);
 #endif
 
   // Register the main executable and the linker upfront to have
@@ -496,6 +496,18 @@ static ElfW(Addr) linker_main(KernelArgumentBlock& args, const char* exe_to_load
     }
     si->increment_ref_count();
   }
+
+  // Exit early for ldd. We don't want to run the code that was loaded, so skip
+  // the constructor calls. Skip CFI setup because it would call __cfi_init in
+  // libdl.so.
+  if (g_is_ldd) _exit(EXIT_SUCCESS);
+
+#if defined(__aarch64__)
+  // This has to happen after the find_libraries, which will have collected any possible
+  // libraries that request memtag_stack in the dynamic section.
+  __libc_init_mte(somain->memtag_dynamic_entries(), somain->phdr, somain->phnum, somain->load_bias,
+                  args.argv);
+#endif
 
   linker_finalize_static_tls();
   __libc_init_main_thread_final();
@@ -623,9 +635,10 @@ static void call_ifunc_resolvers_for_section(RelType* begin, RelType* end) {
   }
 }
 
-static void call_ifunc_resolvers() {
-  // Find the IRELATIVE relocations using the DT_JMPREL and DT_PLTRELSZ, or DT_RELA? and DT_RELA?SZ
-  // dynamic tags.
+static void relocate_linker() {
+  // The linker should only have relative relocations (in RELR) and IRELATIVE
+  // relocations. Find the IRELATIVE relocations using the DT_JMPREL and
+  // DT_PLTRELSZ, or DT_RELA/DT_RELASZ (DT_REL/DT_RELSZ on ILP32).
   auto ehdr = reinterpret_cast<ElfW(Addr)>(&__ehdr_start);
   auto* phdr = reinterpret_cast<ElfW(Phdr)*>(ehdr + __ehdr_start.e_phoff);
   for (size_t i = 0; i != __ehdr_start.e_phnum; ++i) {
@@ -633,17 +646,32 @@ static void call_ifunc_resolvers() {
       continue;
     }
     auto *dyn = reinterpret_cast<ElfW(Dyn)*>(ehdr + phdr[i].p_vaddr);
-    ElfW(Addr) pltrel = 0, pltrelsz = 0, rel = 0, relsz = 0;
+    ElfW(Addr) relr = 0, relrsz = 0, pltrel = 0, pltrelsz = 0, rel = 0, relsz = 0;
     for (size_t j = 0, size = phdr[i].p_filesz / sizeof(ElfW(Dyn)); j != size; ++j) {
-      if (dyn[j].d_tag == DT_JMPREL) {
-        pltrel = dyn[j].d_un.d_ptr;
-      } else if (dyn[j].d_tag == DT_PLTRELSZ) {
-        pltrelsz = dyn[j].d_un.d_ptr;
-      } else if (dyn[j].d_tag == kRelTag) {
-        rel = dyn[j].d_un.d_ptr;
-      } else if (dyn[j].d_tag == kRelSzTag) {
-        relsz = dyn[j].d_un.d_ptr;
+      const auto tag = dyn[j].d_tag;
+      const auto val = dyn[j].d_un.d_ptr;
+      // We don't currently handle IRELATIVE relocations in DT_ANDROID_REL[A].
+      // We disabled DT_ANDROID_REL[A] at build time; verify that it was actually disabled.
+      CHECK(tag != DT_ANDROID_REL && tag != DT_ANDROID_RELA);
+      if (tag == DT_RELR || tag == DT_ANDROID_RELR) {
+        relr = val;
+      } else if (tag == DT_RELRSZ || tag == DT_ANDROID_RELRSZ) {
+        relrsz = val;
+      } else if (tag == DT_JMPREL) {
+        pltrel = val;
+      } else if (tag == DT_PLTRELSZ) {
+        pltrelsz = val;
+      } else if (tag == kRelTag) {
+        rel = val;
+      } else if (tag == kRelSzTag) {
+        relsz = val;
       }
+    }
+    // Apply RELR relocations first so that the GOT is initialized for ifunc
+    // resolvers.
+    if (relr && relrsz) {
+      relocate_relr(reinterpret_cast<ElfW(Relr*)>(ehdr + relr),
+                    reinterpret_cast<ElfW(Relr*)>(ehdr + relr + relrsz), ehdr);
     }
     if (pltrel && pltrelsz) {
       call_ifunc_resolvers_for_section(reinterpret_cast<RelType*>(ehdr + pltrel),
@@ -722,8 +750,12 @@ extern "C" ElfW(Addr) __linker_init(void* raw_args) {
   ElfW(Ehdr)* elf_hdr = reinterpret_cast<ElfW(Ehdr)*>(linker_addr);
   ElfW(Phdr)* phdr = reinterpret_cast<ElfW(Phdr)*>(linker_addr + elf_hdr->e_phoff);
 
-  // string.h functions must not be used prior to calling the linker's ifunc resolvers.
-  call_ifunc_resolvers();
+  // Relocate the linker. This step will initialize the GOT, which is needed for
+  // accessing non-hidden global variables. (On some targets, the stack
+  // protector uses GOT accesses rather than TLS.) Relocating the linker will
+  // also call the linker's ifunc resolvers so that string.h functions can be
+  // used.
+  relocate_linker();
 
   soinfo tmp_linker_so(nullptr, nullptr, nullptr, 0, 0);
 
@@ -735,7 +767,6 @@ extern "C" ElfW(Addr) __linker_init(void* raw_args) {
   tmp_linker_so.phnum = elf_hdr->e_phnum;
   tmp_linker_so.set_linker_flag();
 
-  // Prelink the linker so we can access linker globals.
   if (!tmp_linker_so.prelink_image()) __linker_cannot_link(args.argv[0]);
   if (!tmp_linker_so.link_image(SymbolLookupList(&tmp_linker_so), &tmp_linker_so, nullptr, nullptr)) __linker_cannot_link(args.argv[0]);
 
@@ -822,8 +853,6 @@ __linker_init_post_relocation(KernelArgumentBlock& args, soinfo& tmp_linker_so) 
   g_default_namespace.add_soinfo(solinker);
 
   ElfW(Addr) start_address = linker_main(args, exe_to_load);
-
-  if (g_is_ldd) _exit(EXIT_SUCCESS);
 
   INFO("[ Jumping to _start (%p)... ]", reinterpret_cast<void*>(start_address));
 

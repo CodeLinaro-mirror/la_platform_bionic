@@ -643,6 +643,7 @@ class LoadTask {
     si_->phdr = elf_reader.loaded_phdr();
     si_->set_gap_start(elf_reader.gap_start());
     si_->set_gap_size(elf_reader.gap_size());
+    si_->set_should_pad_segments(elf_reader.should_pad_segments());
 
     return true;
   }
@@ -1698,12 +1699,30 @@ bool find_libraries(android_namespace_t* ns,
   }
 
   // Step 3: pre-link all DT_NEEDED libraries in breadth first order.
+  bool any_memtag_stack = false;
   for (auto&& task : load_tasks) {
     soinfo* si = task->get_soinfo();
     if (!si->is_linked() && !si->prelink_image()) {
       return false;
     }
+    // si->memtag_stack() needs to be called after si->prelink_image() which populates
+    // the dynamic section.
+    if (si->has_min_version(7) && si->memtag_stack()) {
+      any_memtag_stack = true;
+      LD_LOG(kLogDlopen,
+             "... load_library requesting stack MTE for: realpath=\"%s\", soname=\"%s\"",
+             si->get_realpath(), si->get_soname());
+    }
     register_soinfo_tls(si);
+  }
+  if (any_memtag_stack) {
+    if (auto* cb = __libc_shared_globals()->memtag_stack_dlopen_callback) {
+      cb();
+    } else {
+      // find_library is used by the initial linking step, so we communicate that we
+      // want memtag_stack enabled to __libc_init_mte.
+      __libc_shared_globals()->initial_memtag_stack = true;
+    }
   }
 
   // Step 4: Construct the global group. DF_1_GLOBAL bit is force set for LD_PRELOADed libs because
@@ -2773,7 +2792,7 @@ bool soinfo::lookup_version_info(const VersionTracker& version_tracker, ElfW(Wor
   return true;
 }
 
-void soinfo::apply_relr_reloc(ElfW(Addr) offset) {
+static void apply_relr_reloc(ElfW(Addr) offset, ElfW(Addr) load_bias) {
   ElfW(Addr) address = offset + load_bias;
   *reinterpret_cast<ElfW(Addr)*>(address) += load_bias;
 }
@@ -2781,20 +2800,18 @@ void soinfo::apply_relr_reloc(ElfW(Addr) offset) {
 // Process relocations in SHT_RELR section (experimental).
 // Details of the encoding are described in this post:
 //   https://groups.google.com/d/msg/generic-abi/bX460iggiKg/Pi9aSwwABgAJ
-bool soinfo::relocate_relr() {
-  ElfW(Relr)* begin = relr_;
-  ElfW(Relr)* end = relr_ + relr_count_;
+bool relocate_relr(const ElfW(Relr)* begin, const ElfW(Relr)* end, ElfW(Addr) load_bias) {
   constexpr size_t wordsize = sizeof(ElfW(Addr));
 
   ElfW(Addr) base = 0;
-  for (ElfW(Relr)* current = begin; current < end; ++current) {
+  for (const ElfW(Relr)* current = begin; current < end; ++current) {
     ElfW(Relr) entry = *current;
     ElfW(Addr) offset;
 
     if ((entry&1) == 0) {
       // Even entry: encodes the offset for next relocation.
       offset = static_cast<ElfW(Addr)>(entry);
-      apply_relr_reloc(offset);
+      apply_relr_reloc(offset, load_bias);
       // Set base offset for subsequent bitmap entries.
       base = offset + wordsize;
       continue;
@@ -2805,7 +2822,7 @@ bool soinfo::relocate_relr() {
     while (entry != 0) {
       entry >>= 1;
       if ((entry&1) != 0) {
-        apply_relr_reloc(offset);
+        apply_relr_reloc(offset, load_bias);
       }
       offset += wordsize;
     }
@@ -2851,11 +2868,12 @@ bool soinfo::prelink_image() {
 
   TlsSegment tls_segment;
   if (__bionic_get_tls_segment(phdr, phnum, load_bias, &tls_segment)) {
-    if (!__bionic_check_tls_alignment(&tls_segment.alignment)) {
-      if (!relocating_linker) {
-        DL_ERR("TLS segment alignment in \"%s\" is not a power of 2: %zu",
-               get_realpath(), tls_segment.alignment);
-      }
+    // The loader does not (currently) support ELF TLS, so it shouldn't have
+    // a TLS segment.
+    CHECK(!relocating_linker && "TLS not supported in loader");
+    if (!__bionic_check_tls_align(tls_segment.aligned_size.align.value)) {
+      DL_ERR("TLS segment alignment in \"%s\" is not a power of 2: %zu", get_realpath(),
+             tls_segment.aligned_size.align.value);
       return false;
     }
     tls_ = std::make_unique<soinfo_tls>();
@@ -3349,7 +3367,7 @@ bool soinfo::link_image(const SymbolLookupList& lookup_list, soinfo* local_group
                               "\"%s\" has text relocations",
                               get_realpath());
     add_dlwarning(get_realpath(), "text relocations");
-    if (phdr_table_unprotect_segments(phdr, phnum, load_bias) < 0) {
+    if (phdr_table_unprotect_segments(phdr, phnum, load_bias, should_pad_segments_) < 0) {
       DL_ERR("can't unprotect loadable segments for \"%s\": %s", get_realpath(), strerror(errno));
       return false;
     }
@@ -3365,7 +3383,7 @@ bool soinfo::link_image(const SymbolLookupList& lookup_list, soinfo* local_group
 #if !defined(__LP64__)
   if (has_text_relocations) {
     // All relocations are done, we can protect our segments back to read-only.
-    if (phdr_table_protect_segments(phdr, phnum, load_bias) < 0) {
+    if (phdr_table_protect_segments(phdr, phnum, load_bias, should_pad_segments_) < 0) {
       DL_ERR("can't protect segments for \"%s\": %s",
              get_realpath(), strerror(errno));
       return false;
@@ -3403,7 +3421,7 @@ bool soinfo::link_image(const SymbolLookupList& lookup_list, soinfo* local_group
 }
 
 bool soinfo::protect_relro() {
-  if (phdr_table_protect_gnu_relro(phdr, phnum, load_bias) < 0) {
+  if (phdr_table_protect_gnu_relro(phdr, phnum, load_bias, should_pad_segments_) < 0) {
     DL_ERR("can't enable GNU RELRO protection for \"%s\": %s",
            get_realpath(), strerror(errno));
     return false;

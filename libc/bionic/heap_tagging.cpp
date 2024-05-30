@@ -57,14 +57,15 @@ void SetDefaultHeapTaggingLevel() {
         break;
       case M_HEAP_TAGGING_LEVEL_SYNC:
       case M_HEAP_TAGGING_LEVEL_ASYNC:
-        atomic_store(&globals->memtag_stack, __libc_shared_globals()->initial_memtag_stack);
+        atomic_store(&globals->memtag, true);
+        atomic_store(&__libc_memtag_stack, __libc_shared_globals()->initial_memtag_stack);
         break;
       default:
         break;
     };
   });
 
-#if defined(USE_SCUDO)
+#if defined(USE_SCUDO) && !__has_feature(hwaddress_sanitizer)
   switch (heap_tagging_level) {
     case M_HEAP_TAGGING_LEVEL_TBI:
     case M_HEAP_TAGGING_LEVEL_NONE:
@@ -90,10 +91,7 @@ static bool set_tcf_on_all_threads(int tcf) {
         }
 
         tagged_addr_ctrl = (tagged_addr_ctrl & ~PR_MTE_TCF_MASK) | tcf;
-        if (prctl(PR_SET_TAGGED_ADDR_CTRL, tagged_addr_ctrl, 0, 0, 0) < 0) {
-          return false;
-        }
-        return true;
+        return prctl(PR_SET_TAGGED_ADDR_CTRL, tagged_addr_ctrl, 0, 0, 0) >= 0;
       },
       &tcf);
 }
@@ -115,7 +113,8 @@ bool SetHeapTaggingLevel(HeapTaggingLevel tag_level) {
           // tagged and checks no longer happen.
           globals->heap_pointer_tag = static_cast<uintptr_t>(0xffull << UNTAG_SHIFT);
         }
-        atomic_store(&globals->memtag_stack, false);
+        atomic_store(&__libc_memtag_stack, false);
+        atomic_store(&globals->memtag, false);
       });
 
       if (heap_tagging_level != M_HEAP_TAGGING_LEVEL_TBI) {
@@ -124,7 +123,7 @@ bool SetHeapTaggingLevel(HeapTaggingLevel tag_level) {
           return false;
         }
       }
-#if defined(USE_SCUDO)
+#if defined(USE_SCUDO) && !__has_feature(hwaddress_sanitizer)
       scudo_malloc_disable_memory_tagging();
 #endif
       break;
@@ -152,12 +151,12 @@ bool SetHeapTaggingLevel(HeapTaggingLevel tag_level) {
         if (!set_tcf_on_all_threads(PR_MTE_TCF_ASYNC | PR_MTE_TCF_SYNC)) {
           set_tcf_on_all_threads(PR_MTE_TCF_ASYNC);
         }
-#if defined(USE_SCUDO)
+#if defined(USE_SCUDO) && !__has_feature(hwaddress_sanitizer)
         scudo_malloc_set_track_allocation_stacks(0);
 #endif
       } else if (tag_level == M_HEAP_TAGGING_LEVEL_SYNC) {
         set_tcf_on_all_threads(PR_MTE_TCF_SYNC);
-#if defined(USE_SCUDO)
+#if defined(USE_SCUDO) && !__has_feature(hwaddress_sanitizer)
         scudo_malloc_set_track_allocation_stacks(1);
 #endif
       }
@@ -193,17 +192,29 @@ static constexpr size_t kUntagLimit = 128 * 1024 * 1024;
 #endif  // __aarch64__
 
 extern "C" __LIBC_HIDDEN__ __attribute__((no_sanitize("memtag"))) void memtag_handle_longjmp(
-    void* sp_dst __unused) {
+    void* sp_dst __unused, void* sp_src __unused) {
+  // A usual longjmp looks like this, where sp_dst was the LR in the call to setlongjmp (i.e.
+  // the SP of the frame calling setlongjmp).
+  // ┌─────────────────────┐                  │
+  // │                     │                  │
+  // ├─────────────────────┤◄──────── sp_dst  │ stack
+  // │         ...         │                  │ grows
+  // ├─────────────────────┤                  │ to lower
+  // │         ...         │                  │ addresses
+  // ├─────────────────────┤◄──────── sp_src  │
+  // │siglongjmp           │                  │
+  // ├─────────────────────┤                  │
+  // │memtag_handle_longjmp│                  │
+  // └─────────────────────┘                  ▼
 #ifdef __aarch64__
-  if (__libc_globals->memtag_stack) {
-    void* sp = __builtin_frame_address(0);
-    size_t distance = reinterpret_cast<uintptr_t>(sp_dst) - reinterpret_cast<uintptr_t>(sp);
+  if (atomic_load(&__libc_memtag_stack)) {
+    size_t distance = reinterpret_cast<uintptr_t>(sp_dst) - reinterpret_cast<uintptr_t>(sp_src);
     if (distance > kUntagLimit) {
       async_safe_fatal(
-          "memtag_handle_longjmp: stack adjustment too large! %p -> %p, distance %zx > %zx\n", sp,
-          sp_dst, distance, kUntagLimit);
+          "memtag_handle_longjmp: stack adjustment too large! %p -> %p, distance %zx > %zx\n",
+          sp_src, sp_dst, distance, kUntagLimit);
     } else {
-      untag_memory(sp, sp_dst);
+      untag_memory(sp_src, sp_dst);
     }
   }
 #endif  // __aarch64__
