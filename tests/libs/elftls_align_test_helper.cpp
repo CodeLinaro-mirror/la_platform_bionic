@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 The Android Open Source Project
+ * Copyright (C) 2024 The Android Open Source Project
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,8 +26,38 @@
  * SUCH DAMAGE.
  */
 
-#pragma once
+#include <stdint.h>
 
-#if defined(__aarch64__)
-#define OFFSETOF_libc_globals_memtag_stack 64
-#endif
+#include "CHECK.h"
+
+struct AlignedVar {
+  int field;
+  char buffer[0x1000 - sizeof(int)];
+} __attribute__((aligned(0x400)));
+
+struct SmallVar {
+  int field;
+  char buffer[0xeee - sizeof(int)];
+};
+
+// The single .tdata section should have a size that isn't a multiple of its
+// alignment.
+__thread struct AlignedVar var1 = {13};
+__thread struct AlignedVar var2 = {17};
+__thread struct SmallVar var3 = {19};
+
+static uintptr_t var_addr(void* value) {
+  // Maybe the optimizer would assume that the variable has the alignment it is
+  // declared with.
+  asm volatile("" : "+r,m"(value) : : "memory");
+  return reinterpret_cast<uintptr_t>(value);
+}
+
+int main() {
+  CHECK((var_addr(&var1) & 0x3ff) == 0);
+  CHECK((var_addr(&var2) & 0x3ff) == 0);
+  CHECK(var1.field == 13);
+  CHECK(var2.field == 17);
+  CHECK(var3.field == 19);
+  return 0;
+}
