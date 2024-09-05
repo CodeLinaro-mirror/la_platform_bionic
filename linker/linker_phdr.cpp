@@ -363,7 +363,7 @@ bool ElfReader::ReadProgramHeaders() {
   }
 
   if (!phdr_fragment_.Map(fd_, file_offset_, header_.e_phoff, size)) {
-    DL_ERR("\"%s\" phdr mmap failed: %s", name_.c_str(), strerror(errno));
+    DL_ERR("\"%s\" phdr mmap failed: %m", name_.c_str());
     return false;
   }
 
@@ -389,7 +389,7 @@ bool ElfReader::ReadSectionHeaders() {
   }
 
   if (!shdr_fragment_.Map(fd_, file_offset_, header_.e_shoff, size)) {
-    DL_ERR("\"%s\" shdr mmap failed: %s", name_.c_str(), strerror(errno));
+    DL_ERR("\"%s\" shdr mmap failed: %m", name_.c_str());
     return false;
   }
 
@@ -482,7 +482,7 @@ bool ElfReader::ReadDynamicSection() {
   }
 
   if (!dynamic_fragment_.Map(fd_, file_offset_, dynamic_shdr->sh_offset, dynamic_shdr->sh_size)) {
-    DL_ERR("\"%s\" dynamic section mmap failed: %s", name_.c_str(), strerror(errno));
+    DL_ERR("\"%s\" dynamic section mmap failed: %m", name_.c_str());
     return false;
   }
 
@@ -495,7 +495,7 @@ bool ElfReader::ReadDynamicSection() {
   }
 
   if (!strtab_fragment_.Map(fd_, file_offset_, strtab_shdr->sh_offset, strtab_shdr->sh_size)) {
-    DL_ERR("\"%s\" strtab section mmap failed: %s", name_.c_str(), strerror(errno));
+    DL_ERR("\"%s\" strtab section mmap failed: %m", name_.c_str());
     return false;
   }
 
@@ -893,7 +893,7 @@ bool ElfReader::LoadSegments() {
                             fd_,
                             file_offset_ + file_page_start);
       if (seg_addr == MAP_FAILED) {
-        DL_ERR("couldn't map \"%s\" segment %zd: %s", name_.c_str(), i, strerror(errno));
+        DL_ERR("couldn't map \"%s\" segment %zd: %m", name_.c_str(), i);
         return false;
       }
 
@@ -954,7 +954,7 @@ bool ElfReader::LoadSegments() {
                            -1,
                            0);
       if (zeromap == MAP_FAILED) {
-        DL_ERR("couldn't zero fill \"%s\" gap: %s", name_.c_str(), strerror(errno));
+        DL_ERR("couldn't zero fill \"%s\" gap: %m", name_.c_str());
         return false;
       }
 
