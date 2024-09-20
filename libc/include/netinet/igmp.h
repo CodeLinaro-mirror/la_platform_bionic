@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 The Android Open Source Project
+ * Copyright (C) 2024 The Android Open Source Project
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,12 +26,31 @@
  * SUCH DAMAGE.
  */
 
-#include <private/bionic_asm.h>
+#pragma once
 
-#define FUNCTION_DELEGATE(name, impl) \
-ENTRY(name); \
-    jmp impl; \
-END(name)
+/**
+ * @file netinet/igmp.h
+ * @brief Internet Group Management Protocol (IGMP).
+ */
 
-FUNCTION_DELEGATE(memset, memset_generic)
-FUNCTION_DELEGATE(__memset_chk, __memset_chk_generic)
+#include <sys/cdefs.h>
+#include <netinet/in.h>
+
+#include <linux/igmp.h>
+
+/**
+ * The uapi type is called `igmphdr`,
+ * doesn't have the `igmp_` prefix on each field,
+ * and uses a `__be32` for the group address.
+ *
+ * This is the type that BSDs and musl/glibc expose to userspace.
+ */
+struct igmp {
+  uint8_t igmp_type;
+  uint8_t igmp_code;
+  uint16_t igmp_cksum;
+  struct in_addr igmp_group;
+};
+
+/** Commonly-used BSD synonym for the Linux constant. */
+#define IGMP_MEMBERSHIP_QUERY IGMP_HOST_MEMBERSHIP_QUERY
