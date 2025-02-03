@@ -177,7 +177,11 @@ int fchmodat(int __dir_fd, const char* _Nonnull __path, mode_t __mode, int __fla
  *
  * Returns 0 on success and returns -1 and sets `errno` on failure.
  */
+
+#if __BIONIC_AVAILABILITY_GUARD(36)
 int lchmod(const char* _Nonnull __path, mode_t __mode) __INTRODUCED_IN(36);
+#endif /* __BIONIC_AVAILABILITY_GUARD(36) */
+
 
 /**
  * [mkdir(2)](https://man7.org/linux/man-pages/man2/mkdir.2.html)
@@ -212,10 +216,10 @@ int fstat64(int __fd, struct stat64* _Nonnull __buf);
  *
  * Returns 0 on success and returns -1 and sets `errno` on failure.
  */
-int fstatat(int __dir_fd, const char* _Nonnull __path, struct stat* _Nonnull __buf, int __flags);
+int fstatat(int __dir_fd, const char* _Nullable __path, struct stat* _Nonnull __buf, int __flags);
 
 /** An alias for fstatat(). */
-int fstatat64(int __dir_fd, const char* _Nonnull __path, struct stat64* _Nonnull __buf, int __flags);
+int fstatat64(int __dir_fd, const char* _Nullable __path, struct stat64* _Nonnull __buf, int __flags);
 
 /**
  * [lstat(2)](https://man7.org/linux/man-pages/man2/lstat.2.html)
@@ -281,7 +285,11 @@ int mkfifo(const char* _Nonnull __path, mode_t __mode);
  *
  * Returns 0 on success and returns -1 and sets `errno` on failure.
  */
+
+#if __BIONIC_AVAILABILITY_GUARD(23)
 int mkfifoat(int __dir_fd, const char* _Nonnull __path, mode_t __mode) __INTRODUCED_IN(23);
+#endif /* __BIONIC_AVAILABILITY_GUARD(23) */
+
 
 /**
  * Used in the tv_nsec field of an argument to utimensat()/futimens()
@@ -312,7 +320,7 @@ int mkfifoat(int __dir_fd, const char* _Nonnull __path, mode_t __mode) __INTRODU
 int utimensat(int __dir_fd, const char* __BIONIC_COMPLICATED_NULLNESS __path, const struct timespec __times[_Nullable 2], int __flags);
 
 /**
- * [futimens(2)](https://man7.org/linux/man-pages/man2/utimensat.2.html) sets
+ * [futimens(3)](https://man7.org/linux/man-pages/man3/futimens.3.html) sets
  * the given file descriptor's timestamp.
  *
  * `__times[0]` is the access time (atime), and `__times[1]` the last modification time (mtime).
@@ -332,7 +340,11 @@ int futimens(int __fd, const struct timespec __times[_Nullable 2]);
  *
  * Available since API level 30.
  */
+
+#if __BIONIC_AVAILABILITY_GUARD(30)
 int statx(int __dir_fd, const char* _Nullable __path, int __flags, unsigned __mask, struct statx* _Nonnull __buf) __INTRODUCED_IN(30);
+#endif /* __BIONIC_AVAILABILITY_GUARD(30) */
+
 #endif
 
 __END_DECLS
