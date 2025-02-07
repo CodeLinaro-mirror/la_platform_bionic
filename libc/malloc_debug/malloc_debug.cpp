@@ -704,6 +704,13 @@ void debug_free(void* pointer) {
   if (DebugCallsDisabled() || pointer == nullptr) {
     return g_dispatch->free(pointer);
   }
+
+  size_t size;
+  if (g_debug->config().options() & RECORD_ALLOCS) {
+    // Need to get the size before disabling debug calls.
+    size = debug_malloc_usable_size(pointer);
+  }
+
   ScopedConcurrentLock lock;
   ScopedDisableDebugCalls disable;
   ScopedBacktraceSignalBlocker blocked;
@@ -712,11 +719,16 @@ void debug_free(void* pointer) {
     return;
   }
 
+  int64_t present_bytes = -1;
   memory_trace::Entry* entry = nullptr;
   if (g_debug->config().options() & RECORD_ALLOCS) {
     // In order to preserve the order of operations, reserve the entry before
     // performing the operation.
     entry = g_debug->record->ReserveEntry();
+
+    // Need to get the present bytes before the pointer is freed in case the
+    // memory is released during the free call.
+    present_bytes = g_debug->record->GetPresentBytes(pointer, size);
   }
 
   TimedResult result = InternalFree(pointer);
@@ -725,6 +737,7 @@ void debug_free(void* pointer) {
     *entry = memory_trace::Entry{.tid = gettid(),
                                  .type = memory_trace::FREE,
                                  .ptr = reinterpret_cast<uint64_t>(pointer),
+                                 .present_bytes = present_bytes,
                                  .start_ns = result.GetStartTimeNS(),
                                  .end_ns = result.GetEndTimeNS()};
   }
@@ -837,6 +850,13 @@ void* debug_realloc(void* pointer, size_t bytes) {
   if (DebugCallsDisabled()) {
     return g_dispatch->realloc(pointer, bytes);
   }
+
+  size_t old_size;
+  if (pointer != nullptr && g_debug->config().options() & RECORD_ALLOCS) {
+    // Need to get the size before disabling debug calls.
+    old_size = debug_malloc_usable_size(pointer);
+  }
+
   ScopedConcurrentLock lock;
   ScopedDisableDebugCalls disable;
   ScopedBacktraceSignalBlocker blocked;
@@ -867,6 +887,13 @@ void* debug_realloc(void* pointer, size_t bytes) {
     return nullptr;
   }
 
+  int64_t present_bytes = -1;
+  if (g_debug->config().options() & RECORD_ALLOCS) {
+    // Need to get the present bytes before the pointer is freed in case the
+    // memory is released during the free call.
+    present_bytes = g_debug->record->GetPresentBytes(pointer, old_size);
+  }
+
   if (bytes == 0) {
     TimedResult result = InternalFree(pointer);
 
@@ -876,6 +903,7 @@ void* debug_realloc(void* pointer, size_t bytes) {
                                    .ptr = 0,
                                    .size = 0,
                                    .u.old_ptr = reinterpret_cast<uint64_t>(pointer),
+                                   .present_bytes = present_bytes,
                                    .start_ns = result.GetStartTimeNS(),
                                    .end_ns = result.GetEndTimeNS()};
     }
@@ -979,6 +1007,7 @@ void* debug_realloc(void* pointer, size_t bytes) {
                                  .ptr = reinterpret_cast<uint64_t>(new_pointer),
                                  .size = bytes,
                                  .u.old_ptr = reinterpret_cast<uint64_t>(pointer),
+                                 .present_bytes = present_bytes,
                                  .start_ns = result.GetStartTimeNS(),
                                  .end_ns = result.GetEndTimeNS()};
   }
