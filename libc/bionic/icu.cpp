@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 The Android Open Source Project
+ * Copyright (C) 2016 The Android Open Source Project
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,20 +26,36 @@
  * SUCH DAMAGE.
  */
 
-#pragma once
+#include "private/icu.h"
 
-#if defined(__aarch64__)
-# define __get_tls() ({ void** __val; __asm__("mrs %0, tpidr_el0" : "=r"(__val)); __val; })
-#elif defined(__arm__)
-# define __get_tls() ({ void** __val; __asm__("mrc p15, 0, %0, c13, c0, 3" : "=r"(__val)); __val; })
-#elif defined(__i386__)
-# define __get_tls() ({ void** __val; __asm__("movl %%gs:0, %0" : "=r"(__val)); __val; })
-#elif defined(__riscv)
-# define __get_tls() ({ void** __val; __asm__("mv %0, tp" : "=r"(__val)); __val; })
-#elif defined(__x86_64__)
-# define __get_tls() ({ void** __val; __asm__("mov %%fs:0, %0" : "=r"(__val)); __val; })
-#else
-#error unsupported architecture
-#endif
+#include <dirent.h>
+#include <dlfcn.h>
+#include <pthread.h>
+#include <stdlib.h>
+#include <string.h>
 
-#include "tls_defines.h"
+#include <async_safe/log.h>
+
+static void* g_libicu_handle = nullptr;
+
+static bool __find_icu() {
+  g_libicu_handle = dlopen("libicu.so", RTLD_LOCAL);
+  if (g_libicu_handle == nullptr) {
+    async_safe_format_log(ANDROID_LOG_ERROR, "bionic-icu", "couldn't open libicu.so: %s",
+                          dlerror());
+    return false;
+  }
+
+  return true;
+}
+
+void* __find_icu_symbol(const char* symbol_name) {
+  static bool found_icu = __find_icu();
+  if (!found_icu) return nullptr;
+
+  void* symbol = dlsym(g_libicu_handle, symbol_name);
+  if (symbol == nullptr) {
+    async_safe_format_log(ANDROID_LOG_ERROR, "bionic-icu", "couldn't find %s", symbol_name);
+  }
+  return symbol;
+}

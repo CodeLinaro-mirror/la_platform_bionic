@@ -28,9 +28,6 @@
 
 // This file perpetuates the mistakes of the past.
 
-// LP64 doesn't need to support any legacy cruft.
-#if !defined(__LP64__)
-
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -50,19 +47,10 @@
 
 #include "platform/bionic/macros.h"
 
-#define __futex_wake __real_futex_wake
-#define __futex_wait __real_futex_wait
-#include "private/bionic_futex.h"
-#undef __futex_wake
-#undef __futex_wait
-
-#define __get_thread __real_get_thread
-#include "pthread_internal.h"
-#undef __get_thread
-static inline void** __real_get_tls() { return __get_tls(); }
-#undef __get_tls
-
 extern "C" {
+
+// LP64 doesn't need to support any legacy cruft.
+#if !defined(__LP64__)
 
 // By the time any NDK-built code is running, there are plenty of threads.
 int __isthreaded = 1;
@@ -85,7 +73,8 @@ int __open() {
 
 // TODO: does anything still need this?
 void** __get_tls() {
-  return __real_get_tls();
+#include "platform/bionic/tls.h"
+  return __get_tls();
 }
 
 // This non-standard function was in our <string.h> for some reason.
@@ -224,6 +213,12 @@ int vfdprintf(int fd, const char* fmt, va_list ap) {
   return vdprintf(fd, fmt, ap);
 }
 
+#define __futex_wake __real_futex_wake
+#define __futex_wait __real_futex_wait
+#include "private/bionic_futex.h"
+#undef __futex_wake
+#undef __futex_wait
+
 // This used to be in <sys/atomics.h>.
 int __futex_wake(volatile void* ftx, int count) {
   return __real_futex_wake(ftx, count);
@@ -361,6 +356,14 @@ void* dlmalloc(size_t size) {
   return malloc(size);
 }
 
+} // extern "C"
+
+#define __get_thread __real_get_thread
+#include "pthread_internal.h"
+#undef __get_thread
+
+extern "C" {
+
 // Various third-party apps contain a backport of our pthread_rwlock implementation that uses this.
 pthread_internal_t* __get_thread() {
   return __real_get_thread();
@@ -385,6 +388,6 @@ int putw(int value, FILE* fp) {
     return fwrite(&value, sizeof(value), 1, fp) == 1 ? 0 : EOF;
 }
 
-} // extern "C"
-
 #endif // !defined (__LP64__)
+
+} // extern "C"

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 The Android Open Source Project
+ * Copyright (C) 2017 The Android Open Source Project
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,20 +26,17 @@
  * SUCH DAMAGE.
  */
 
-#pragma once
+#include "private/icu.h"
 
-#if defined(__aarch64__)
-# define __get_tls() ({ void** __val; __asm__("mrs %0, tpidr_el0" : "=r"(__val)); __val; })
-#elif defined(__arm__)
-# define __get_tls() ({ void** __val; __asm__("mrc p15, 0, %0, c13, c0, 3" : "=r"(__val)); __val; })
-#elif defined(__i386__)
-# define __get_tls() ({ void** __val; __asm__("movl %%gs:0, %0" : "=r"(__val)); __val; })
-#elif defined(__riscv)
-# define __get_tls() ({ void** __val; __asm__("mv %0, tp" : "=r"(__val)); __val; })
-#elif defined(__x86_64__)
-# define __get_tls() ({ void** __val; __asm__("mov %%fs:0, %0" : "=r"(__val)); __val; })
-#else
-#error unsupported architecture
-#endif
+int8_t __icu_charType(wint_t wc) {
+  typedef int8_t (*u_charType_t)(UChar32);
+  static auto u_charType = reinterpret_cast<u_charType_t>(__find_icu_symbol("u_charType"));
+  return u_charType ? u_charType(wc) : -1;
+}
 
-#include "tls_defines.h"
+int32_t __icu_getIntPropertyValue(wint_t wc, UProperty property) {
+  typedef int32_t (*u_getIntPropertyValue_t)(UChar32, UProperty);
+  static auto u_getIntPropertyValue =
+      reinterpret_cast<u_getIntPropertyValue_t>(__find_icu_symbol("u_getIntPropertyValue"));
+  return u_getIntPropertyValue ? u_getIntPropertyValue(wc, property) : 0;
+}
