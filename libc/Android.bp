@@ -104,8 +104,6 @@ cc_defaults {
     },
 
     apex_available: ["com.android.runtime"],
-
-    tidy_disabled_srcs: ["upstream-*/**/*.c"],
 }
 
 // Workaround for b/24465209.
@@ -480,7 +478,6 @@ cc_library_static {
         "upstream-netbsd/lib/libc/stdlib/nrand48.c",
         "upstream-netbsd/lib/libc/stdlib/_rand48.c",
         "upstream-netbsd/lib/libc/stdlib/rand_r.c",
-        "upstream-netbsd/lib/libc/stdlib/reallocarr.c",
         "upstream-netbsd/lib/libc/stdlib/seed48.c",
         "upstream-netbsd/lib/libc/stdlib/srand48.c",
     ],
@@ -622,7 +619,6 @@ cc_library_static {
     arch: {
         arm: {
             srcs: [
-                "upstream-openbsd/lib/libc/string/memchr.c",
                 "upstream-openbsd/lib/libc/string/stpncpy.c",
                 "upstream-openbsd/lib/libc/string/strncat.c",
                 "upstream-openbsd/lib/libc/string/strncmp.c",
@@ -788,12 +784,6 @@ cc_library_static {
             srcs: [
                 "arch-arm64/string/__memcpy_chk.S",
                 "arch-arm64/string/__memset_chk.S",
-            ],
-        },
-        riscv64: {
-            srcs: [
-                "arch-riscv64/string/__memset_chk.S",
-                "arch-riscv64/string/__memcpy_chk.S",
             ],
         },
     },
@@ -1083,8 +1073,6 @@ cc_library_static {
                 "arch-arm/krait/bionic/memset.S",
 
                 "arch-arm/kryo/bionic/memcpy.S",
-
-                "bionic/strchr.cpp",
             ],
         },
         arm64: {
@@ -1107,21 +1095,21 @@ cc_library_static {
                 "arch-riscv64/bionic/syscall.S",
                 "arch-riscv64/bionic/vfork.S",
 
-                "arch-riscv64/string/memchr_v.S",
-                "arch-riscv64/string/memcmp_v.S",
-                "arch-riscv64/string/memcpy_v.S",
-                "arch-riscv64/string/memmove_v.S",
-                "arch-riscv64/string/memset_v.S",
-                "arch-riscv64/string/stpcpy_v.S",
-                "arch-riscv64/string/strcat_v.S",
-                "arch-riscv64/string/strchr_v.S",
-                "arch-riscv64/string/strcmp_v.S",
-                "arch-riscv64/string/strcpy_v.S",
-                "arch-riscv64/string/strlen_v.S",
-                "arch-riscv64/string/strncat_v.S",
-                "arch-riscv64/string/strncmp_v.S",
-                "arch-riscv64/string/strncpy_v.S",
-                "arch-riscv64/string/strnlen_v.S",
+                "arch-riscv64/string/memchr.S",
+                "arch-riscv64/string/memcmp.S",
+                "arch-riscv64/string/memcpy.S",
+                "arch-riscv64/string/memmove.S",
+                "arch-riscv64/string/memset.S",
+                "arch-riscv64/string/stpcpy.S",
+                "arch-riscv64/string/strcat.S",
+                "arch-riscv64/string/strchr.S",
+                "arch-riscv64/string/strcmp.S",
+                "arch-riscv64/string/strcpy.S",
+                "arch-riscv64/string/strlen.S",
+                "arch-riscv64/string/strncat.S",
+                "arch-riscv64/string/strncmp.S",
+                "arch-riscv64/string/strncpy.S",
+                "arch-riscv64/string/strnlen.S",
             ],
         },
 
@@ -1135,12 +1123,10 @@ cc_library_static {
                 "arch-x86/bionic/vfork.S",
                 "arch-x86/bionic/__x86.get_pc_thunk.S",
 
-                "arch-x86/string/sse2-memchr-atom.S",
                 "arch-x86/string/sse2-memmove-slm.S",
                 "arch-x86/string/sse2-memset-slm.S",
                 "arch-x86/string/sse2-stpcpy-slm.S",
                 "arch-x86/string/sse2-stpncpy-slm.S",
-                "arch-x86/string/sse2-strchr-atom.S",
                 "arch-x86/string/sse2-strcpy-slm.S",
                 "arch-x86/string/sse2-strlen-slm.S",
                 "arch-x86/string/sse2-strncpy-slm.S",
@@ -1634,9 +1620,7 @@ cc_library {
     // which is default module for soong-defined system image.
     visibility: [
         "//bionic/apex",
-        "//build/make/target/product/generic",
-        //TODO(b/381985636) : Remove visibility to Soong-defined GSI once resolved
-        "//build/make/target/product/gsi",
+        "//visibility:any_system_partition",
     ],
 }
 
@@ -2094,6 +2078,7 @@ cc_library_static {
 
 // This library contains the following unresolved symbols:
 //     __errno
+//     __x86_shared_cache_size_half (x86_64 only)
 //     abort
 //     async_safe_fatal_va_list
 cc_library_static {
@@ -2113,14 +2098,37 @@ cc_library_static {
         "bionic/strtol.cpp",
     ],
     arch: {
+        arm: {
+            enabled: false,
+        },
         arm64: {
             srcs: [
                 "arch-arm64/string/__memcpy_chk.S",
             ],
         },
-        riscv64: {
+        x86: {
+            enabled: false,
+        },
+        x86_64: {
+            asflags: [
+                // Statically choose the SSE2 memset_generic as memset for
+                // baremetal, where we do not have the dynamic function
+                // dispatch machinery.
+                "-Dmemset_generic=memset",
+            ],
             srcs: [
-                "arch-riscv64/string/__memcpy_chk.S",
+                "arch-x86_64/string/sse2-memmove-slm.S",
+                "arch-x86_64/string/sse2-memset-slm.S",
+                "arch-x86_64/string/sse2-stpcpy-slm.S",
+                "arch-x86_64/string/sse2-stpncpy-slm.S",
+                "arch-x86_64/string/sse2-strcat-slm.S",
+                "arch-x86_64/string/sse2-strcpy-slm.S",
+                "arch-x86_64/string/sse2-strlen-slm.S",
+                "arch-x86_64/string/sse2-strncat-slm.S",
+                "arch-x86_64/string/sse2-strncpy-slm.S",
+                "arch-x86_64/string/sse4-memcmp-slm.S",
+                "arch-x86_64/string/ssse3-strcmp-slm.S",
+                "arch-x86_64/string/ssse3-strncmp-slm.S",
             ],
         },
     },
@@ -2275,6 +2283,9 @@ cc_defaults {
         "-E",
         "-Wall",
         "-Werror",
+        // Soong implicitly adds a -c argument that we override with -E.
+        // Suppress Clang's error about the unused -c argument.
+        "-Wno-unused-command-line-argument",
         "-nostdinc",
     ],
 }
@@ -2384,7 +2395,7 @@ genrule {
     name: "generate_app_zygote_blocklist",
     out: ["SECCOMP_BLOCKLIST_APP_ZYGOTE.TXT"],
     srcs: ["SECCOMP_BLOCKLIST_APP.TXT"],
-    cmd: "grep -v '^int[ \t]*setresgid' $(in) > $(out)",
+    cmd: "grep -v '^setresgid' $(in) > $(out)",
 }
 
 filegroup {
@@ -2692,6 +2703,7 @@ cc_library {
     },
 }
 
+// TODO: add this directly to musl like libexecinfo and libb64?
 cc_library_host_static {
     name: "libfts",
     srcs: [
@@ -2704,6 +2716,7 @@ cc_library_host_static {
         "upstream-openbsd/android/include",
     ],
     cflags: [
+        "-std=gnu99",
         "-include openbsd-compat.h",
         "-Wno-unused-parameter",
     ],
@@ -2743,6 +2756,7 @@ cc_library_host_static {
         "upstream-openbsd/android/include",
     ],
     cflags: [
+        "-std=gnu99",
         "-include openbsd-compat.h",
     ],
     enabled: false,
