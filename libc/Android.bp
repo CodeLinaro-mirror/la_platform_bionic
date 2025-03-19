@@ -2136,6 +2136,12 @@ cc_library_static {
             enabled: false,
         },
         x86_64: {
+            asflags: [
+                // Statically choose the SSE2 memset_generic as memset for
+                // baremetal, where we do not have the dynamic function
+                // dispatch machinery.
+                "-Dmemset_generic=memset",
+            ],
             srcs: [
                 "arch-x86_64/string/sse2-memmove-slm.S",
                 "arch-x86_64/string/sse2-memset-slm.S",
@@ -2415,7 +2421,7 @@ genrule {
     name: "generate_app_zygote_blocklist",
     out: ["SECCOMP_BLOCKLIST_APP_ZYGOTE.TXT"],
     srcs: ["SECCOMP_BLOCKLIST_APP.TXT"],
-    cmd: "grep -v '^int[ \t]*setresgid' $(in) > $(out)",
+    cmd: "grep -v '^setresgid' $(in) > $(out)",
 }
 
 filegroup {
@@ -2723,6 +2729,7 @@ cc_library {
     },
 }
 
+// TODO: add this directly to musl like libexecinfo and libb64?
 cc_library_host_static {
     name: "libfts",
     srcs: [
@@ -2735,6 +2742,7 @@ cc_library_host_static {
         "upstream-openbsd/android/include",
     ],
     cflags: [
+        "-std=gnu99",
         "-include openbsd-compat.h",
         "-Wno-unused-parameter",
     ],
@@ -2774,6 +2782,7 @@ cc_library_host_static {
         "upstream-openbsd/android/include",
     ],
     cflags: [
+        "-std=gnu99",
         "-include openbsd-compat.h",
     ],
     enabled: false,
