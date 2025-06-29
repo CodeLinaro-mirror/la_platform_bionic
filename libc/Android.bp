@@ -387,8 +387,6 @@ cc_library_static {
         "upstream-freebsd/lib/libc/string/wcsncasecmp.c",
         "upstream-freebsd/lib/libc/string/wcsnlen.c",
         "upstream-freebsd/lib/libc/string/wcstok.c",
-        "upstream-freebsd/lib/libc/string/wmemmove.c",
-        "upstream-freebsd/lib/libc/string/wmemset.c",
     ],
 
     cflags: [
@@ -1024,7 +1022,6 @@ cc_library_static {
         "bionic/wcstod.cpp",
         "bionic/wctype.cpp",
         "bionic/wcwidth.cpp",
-        "bionic/wmempcpy.cpp",
 
         // Forked but not yet cleaned up/rewritten stdio code.
         // TODO: finish cleanup.
