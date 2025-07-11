@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 The Android Open Source Project
+ * Copyright (C) 2025 The Android Open Source Project
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,17 +26,20 @@
  * SUCH DAMAGE.
  */
 
-#include <pthread.h>
-#include "private/thread_private.h"
+#include <endian.h>
 
-// Some simple glue used to make BSD code thread-safe.
-
-static pthread_mutex_t g_arc4_lock = PTHREAD_MUTEX_INITIALIZER;
-
-void _thread_arc4_lock() {
-  pthread_mutex_lock(&g_arc4_lock);
+uint32_t (htonl)(uint32_t x) {
+  return htonl(x);
 }
 
-void _thread_arc4_unlock() {
-  pthread_mutex_unlock(&g_arc4_lock);
+uint16_t (htons)(uint16_t x) {
+  return htons(x);
+}
+
+uint32_t (ntohl)(uint32_t x) {
+  return ntohl(x);
+}
+
+uint16_t (ntohs)(uint16_t x) {
+  return ntohs(x);
 }
