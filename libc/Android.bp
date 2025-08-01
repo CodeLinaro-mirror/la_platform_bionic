@@ -790,6 +790,7 @@ cc_rustlibs_for_make {
 
 cc_library_static {
     defaults: ["libc_defaults"],
+    sdclang: false,
     srcs: [
         "bionic/NetdClientDispatch.cpp",
         "bionic/__bionic_get_shell_path.cpp",
@@ -1244,6 +1245,7 @@ genrule {
 cc_library_static {
     defaults: ["libc_defaults"],
     srcs: ["bionic/__set_errno.cpp"],
+    sdclang: false,
     arch: {
         arm: {
             srcs: [":syscalls-arm"],
