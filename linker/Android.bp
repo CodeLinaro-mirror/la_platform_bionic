@@ -474,6 +474,7 @@ cc_library {
 cc_test {
     name: "linker-unit-tests",
     test_suites: ["device-tests"],
+    isolated: true,
 
     cflags: [
         "-g",
@@ -510,6 +511,7 @@ cc_test {
         "linker_sdk_versions.cpp",
         "linker_dlwarning.cpp",
         "linker_phdr_16kib_compat.cpp",
+        "linker_transparent_hugepage_support.cpp",
     ],
 
     static_libs: [
@@ -531,6 +533,7 @@ cc_test {
         },
         arm64: {
             srcs: ["arch/arm_neon/linker_gnu_hash_neon.cpp"],
+            data_libs: ["note_gnu_property"],
         },
     },
 }
