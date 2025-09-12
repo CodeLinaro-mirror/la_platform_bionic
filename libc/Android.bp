@@ -521,7 +521,6 @@ cc_library_static {
         "upstream-openbsd/lib/libc/string/strcasestr.c",
         "upstream-openbsd/lib/libc/string/strdup.c",
         "upstream-openbsd/lib/libc/string/strndup.c",
-        "upstream-openbsd/lib/libc/string/strtok.c",
 
         // These files are originally from OpenBSD,
         // and benefit from being compiled with openbsd-compat.h.
@@ -2045,6 +2044,8 @@ cc_library_static {
     cflags: [
         "-Wall",
         "-Werror",
+
+        "-DBIONIC_RUST_BAREMETAL",
     ],
     asflags: [
         "-DBIONIC_RUST_BAREMETAL",
@@ -2093,7 +2094,6 @@ cc_library_static {
     whole_static_libs: [
         "//external/llvm-libc:llvmlibc",
         "libarm-optimized-routines-mem",
-        "libc_netbsd",
     ],
     system_shared_libs: [],
     nocrt: true,
