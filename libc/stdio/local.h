@@ -38,10 +38,6 @@
 #include <stdbool.h>
 #include <wchar.h>
 
-#if defined(__cplusplus)  // Until we fork all of stdio...
-#include "private/bionic_fortify.h"
-#endif
-
 /*
  * Information local to this implementation of stdio,
  * in particular, macros and private variables.
@@ -84,25 +80,32 @@ struct __sFILE {
   unsigned char* _up; /* saved _p when _p is doing ungetc data */
   int _ur;            /* saved _r when _r is counting ungetc data */
 
-  /* tricks to meet minimum requirements even when malloc() fails */
-  unsigned char _ubuf[3]; /* guarantee an ungetc() buffer */
-  unsigned char _nbuf[1]; /* guarantee a getc() buffer */
+  // Tricks to avoid calling malloc() in common cases.
+  unsigned char _ubuf[3]; // Guarantee an ungetc() buffer.
+  unsigned char _nbuf[1]; // Guarantee a getc() buffer.
 
   /* separate buffer for fgetln() when line crosses buffer boundary */
   struct __sbuf _lb; /* buffer for fgetln() */
 
-  /* Unix stdio files get aligned to block boundaries on fseek() */
-  int _blksize; /* stat.st_blksize (may be != _bf._size) */
-
-  fpos_t _unused_0;  // This was the `_offset` field (see below).
-
-  // Do not add new fields here. (Or remove or change the size of any above.)
-  // Although bionic currently exports `stdin`, `stdout`, and `stderr` symbols,
-  // that still hasn't made it to the NDK. All NDK-built apps index directly
-  // into an array of this struct (which was in <stdio.h> historically), so if
-  // you need to make any changes, they need to be in the `__sfileext` struct
-  // below, and accessed via `_EXT`.
+  int _unused_0;  // This was the `_blksize` field (see below).
+  fpos_t _unused_1;  // This was the `_offset` field (see below).
 };
+
+// Do not add/remove/change the size of any fields anywhere in this struct.
+//
+// Although bionic exports `stdin`, `stdout`, and `stderr` symbols
+// from API 23 on, apps supporting earlier APIs index directly into `__sF[]`
+// which is an array of this struct (which was in <stdio.h> historically).
+// That means that if the size of this struct changes, `stdout` and `stderr`
+// are broken.
+//
+// If you need to make any changes, they need to be in the `__sfileext` struct
+// below, and accessed via `_EXT()`.
+#if defined(__LP64__)
+_Static_assert(sizeof(struct __sFILE) == 152, "__sFILE changed size");
+#else
+_Static_assert(sizeof(struct __sFILE) == 84, "__sFILE changed size");
+#endif
 
 /* minimal requirement of SUSv2 */
 #define WCIO_UNGETWC_BUFSIZE 1
@@ -158,10 +161,8 @@ struct __sfileext {
 #define __SALC 0x4000  // Allocate string space dynamically.
 #define __SIGN 0x8000  // Ignore this file in _fwalk.
 
-// TODO: remove remaining references to these obsolete flags (see above).
+// TODO: remove remaining references to this obsolete flag (see above).
 #define __SMOD 0
-#define __SNPT 0
-#define __SOPT 0
 
 #define _EXT(fp) __BIONIC_CAST(reinterpret_cast, struct __sfileext*, (fp)->_ext._base)
 
@@ -200,7 +201,7 @@ __LIBC32_LEGACY_PUBLIC__ int _fwalk(int (*)(FILE*));
 
 off64_t __sseek64(void*, off64_t, int);
 int __sflush_locked(FILE*);
-int __swhatbuf(FILE*, size_t*, int*);
+void __swhatbuf(FILE*, size_t*, int*);
 wint_t __fgetwc_unlock(FILE*);
 wint_t __ungetwc(wint_t, FILE*);
 int __vfprintf(FILE*, const char*, va_list);
@@ -253,11 +254,6 @@ extern void __sinit(void);  // Not actually implemented.
 
 size_t parsefloat(FILE*, char*, char*);
 size_t wparsefloat(FILE*, wchar_t*, wchar_t*);
-
-// Check a FILE* isn't nullptr, so we can emit a clear diagnostic message
-// instead of just crashing with SIGSEGV.
-#define CHECK_FP(fp) \
-  if (fp == nullptr) __fortify_fatal("%s: null FILE*", __FUNCTION__)
 
 /*
  * Floating point scanf/printf (input/output) definitions.
