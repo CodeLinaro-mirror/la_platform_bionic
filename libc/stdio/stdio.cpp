@@ -1,4 +1,3 @@
-/*	$OpenBSD: findfp.c,v 1.15 2013/12/17 16:33:27 deraadt Exp $ */
 /*-
  * Copyright (c) 1990, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -50,7 +49,6 @@
 
 #include <async_safe/log.h>
 
-#include "glue.h"
 #include "local.h"
 #include "private/ErrnoRestorer.h"
 #include "private/FdPath.h"
@@ -120,6 +118,14 @@ static uint64_t __get_file_tag(FILE* fp) {
                                         reinterpret_cast<uint64_t>(fp));
 }
 
+// The first few FILEs are statically allocated; others are dynamically
+// allocated and linked in via this glue structure.
+// TODO: replace this with an intrusive doubly-linked list of the FILE*s (via _EXT())
+struct glue {
+  struct glue* next;
+  int niobs;
+  FILE* iobs;
+};
 struct glue __sglue = { nullptr, 3, __sF };
 static struct glue* lastglue = &__sglue;
 
@@ -812,6 +818,17 @@ int fgetc_unlocked(FILE* fp) {
   return getc_unlocked(fp);
 }
 
+char* fgetln(FILE* fp, size_t* length_ptr) {
+  CHECK_FP(fp);
+  ScopedFileLock sfl(fp);
+  // Implementing fgetln() in terms of getdelim() means lines are actually always NUL terminated.
+  // We could explicitly overwrite the NUL to be "bug compatible", but that seems silly?
+  ssize_t n = getdelim(reinterpret_cast<char**>(&fp->_lb._base), &fp->_lb._size, '\n', fp);
+  if (n <= 0) return nullptr;
+  *length_ptr = n;
+  return reinterpret_cast<char*>(fp->_lb._base);
+}
+
 char* fgets(char* buf, int n, FILE* fp) {
   CHECK_FP(fp);
   ScopedFileLock sfl(fp);
@@ -1097,12 +1114,6 @@ nbf:
     }
     flags |= __SMBF;
   }
-
-  /*
-   * We're committed to buffering from here, so make sure we've
-   * registered to flush buffers on exit.
-   */
-  if (!__sdidinit) __sinit();
 
   /*
    * Fix up the FILE fields, and set __cleanup for output flush on
@@ -1436,6 +1447,13 @@ int ftrylockfile(FILE* fp) {
 void funlockfile(FILE* fp) {
   CHECK_FP(fp);
   pthread_mutex_unlock(&_EXT(fp)->_lock);
+}
+
+int fwide(FILE* fp, int mode) {
+  CHECK_FP(fp);
+  ScopedFileLock sfl(fp);
+  if (mode != 0) _SET_ORIENTATION(fp, mode);
+  return WCIO_GET(fp)->orientation;
 }
 
 namespace {
