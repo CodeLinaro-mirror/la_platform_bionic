@@ -237,6 +237,88 @@ extern "C" __LIBC_HIDDEN__ void __libc_stdio_cleanup(void) {
 }
 
 /*
+ * Refill a stdio buffer.
+ * Return EOF on eof or error, 0 otherwise.
+ */
+int __srefill(FILE* fp) {
+  fp->_r = 0; /* largely a convenience for callers */
+
+  /* if not already reading, have to be reading and writing */
+  if ((fp->_flags & __SRD) == 0) {
+    if ((fp->_flags & __SRW) == 0) {
+      errno = EBADF;
+      fp->_flags |= __SERR;
+      return EOF;
+    }
+    /* switch to reading */
+    if (fp->_flags & __SWR) {
+      if (__sflush(fp)) return EOF;
+      fp->_flags &= ~__SWR;
+      fp->_w = 0;
+      fp->_lbfsize = 0;
+    }
+    fp->_flags |= __SRD;
+  } else {
+    /*
+     * We were reading.  If there is an ungetc buffer,
+     * we must have been reading from that.  Drop it,
+     * restoring the previous buffer (if any).  If there
+     * is anything in that buffer, return.
+     */
+    if (HASUB(fp)) {
+      FREEUB(fp);
+      if ((fp->_r = fp->_ur) != 0) {
+        fp->_p = fp->_up;
+        return 0;
+      }
+    }
+  }
+
+  if (fp->_bf._base == NULL) __smakebuf(fp);
+
+  // If we're about to read from an unbuffered or line-buffered stream, what do we need to do?
+  //
+  // Everyone points to the ISO C standard, but disagree about how to interpret it.
+  // The two most important sentences are C23 5.1.2.3 paragraph 6 bullet 3 which says that
+  // "the intent ... is that unbuffered or line-buffered output appear as soon as possible,
+  // to ensure that prompting messages appear prior to a program waiting for input",
+  // and C23 7.23.3 paragraph 3 which qualifies the extended description of these behaviors with
+  // "Support for these characteristics is implementation-defined".
+  //
+  // In practice, BSD flushes all streams, glibc only flushes stdout, and musl flushes no streams.
+  //
+  // Being BSD-derived, bionic historically flushed all streams. This was never implemented in a
+  // completely thread-safe manner, and all attempts to fix that failed by introducing deadlocks.
+  // Upstream BSD even adds a __SIGN ("ignore") flag as a partial workaround, but that only covers
+  // the per-file locks' deadlocks, not deadlocks that would be caused by adding the missing locking
+  // of the _list_ of streams.
+  //
+  // Long term I think we should move to the musl model, but the simple safe choice is to behave
+  // like glibc and just flush stdout. (A transition glibc made in 2004, having had inherited BSD
+  // behavior before then.)
+  if (fp->_flags & (__SLBF|__SNBF)) {
+    // We use fflush() rather than __sflush() for stdout since we don't hold the stdout lock.
+    fflush(stdout);
+
+    // Now flush _this_ file without locking it (because our caller should have either taken the
+    // lock or know it's in a context -- such as fread_unlocked() -- where the lock isn't needed).
+    if ((fp->_flags & (__SLBF|__SWR)) == (__SLBF|__SWR)) __sflush(fp);
+  }
+  fp->_p = fp->_bf._base;
+  fp->_r = (*fp->_read)(fp->_cookie, reinterpret_cast<char*>(fp->_p), fp->_bf._size);
+  if (fp->_r <= 0) {
+    if (fp->_r == 0) {
+      fp->_flags |= __SEOF;
+    } else {
+      fp->_r = 0;
+      fp->_flags |= __SERR;
+    }
+    return EOF;
+  }
+  return 0;
+}
+
+/*
  * Allocate a file buffer, or switch to unbuffered I/O.
  * Per the ANSI C standard, ALL tty devices default to line buffered.
  */
