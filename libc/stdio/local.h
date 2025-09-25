@@ -88,8 +88,7 @@ struct __sFILE {
   unsigned char _ubuf[3]; // Guarantee an ungetc() buffer.
   unsigned char _nbuf[1]; // Guarantee a getc() buffer.
 
-  /* separate buffer for fgetln() when line crosses buffer boundary */
-  struct __sbuf _lb; /* buffer for fgetln() */
+  struct __sbuf fgetln_buffer;
 
   int _unused_0;  // This was the `_blksize` field (see below).
   fpos_t _unused_1;  // This was the `_offset` field (see below).
@@ -164,7 +163,7 @@ struct __sfileext {
 // #define __SOFF 0x1000 --- historical (set iff _offset is in fact correct).
 // #define __SMOD 0x2000 --- historical (set iff fgetln() returned _bf pointer).
 #define __SALC 0x4000  // Allocate string space dynamically.
-#define __SIGN 0x8000  // Ignore this file in _fwalk.
+// #define __SIGN 0x8000  // historical (ignore this file in _fwalk()).
 
 #define _EXT(fp) __BIONIC_CAST(reinterpret_cast, struct __sfileext*, (fp)->_ext._base)
 
@@ -205,7 +204,6 @@ __LIBC32_LEGACY_PUBLIC__ int _fwalk(int (*)(FILE*));
 __LIBC32_LEGACY_PUBLIC__ extern struct glue __sglue;
 
 off64_t __sseek64(void*, off64_t, int);
-int __sflush_locked(FILE*);
 void __swhatbuf(FILE*, size_t*, int*);
 wint_t __fgetwc_unlock(FILE*);
 wint_t __ungetwc(wint_t, FILE*);
