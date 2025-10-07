@@ -88,10 +88,13 @@ class ElfReader {
   void DropPaddingPages(const ElfW(Phdr)* phdr, uint64_t seg_file_end);
   [[nodiscard]] bool MapBssSection(const ElfW(Phdr)* phdr, ElfW(Addr) seg_page_end,
                                    ElfW(Addr) seg_file_end);
-  [[nodiscard]] bool IsEligibleFor16KiBAppCompat(ElfW(Addr)* vaddr);
+  [[nodiscard]] bool IsEligibleForRXRWAppCompat(ElfW(Addr)* vaddr);
   [[nodiscard]] bool HasAtMostOneRelroSegment(const ElfW(Phdr)** relro_phdr);
   void FixMinAlignFor16KiB();
-  [[nodiscard]] bool Setup16KiBAppCompat(std::string* error);
+  void LabelCompatVma();
+  void SetupRXRWAppCompat(ElfW(Addr) rx_rw_boundary);
+  [[nodiscard]] bool SetupRWXAppCompat();
+  [[nodiscard]] bool Setup16KiBAppCompat();
   [[nodiscard]] bool LoadSegments();
   [[nodiscard]] bool FindPhdr();
   [[nodiscard]] bool FindGnuPropertySection();
@@ -148,6 +151,9 @@ class ElfReader {
 
   // Use app compat mode when loading 4KiB max-page-size ELFs on 16KiB page-size devices?
   bool should_use_16kib_app_compat_ = false;
+
+  // Should fail hard on 16KiB related dlopen() errors?
+  bool dlopen_16kib_err_is_fatal_ = false;
 
   // RELRO region for 16KiB compat loading
   ElfW(Addr) compat_relro_start_ = 0;
