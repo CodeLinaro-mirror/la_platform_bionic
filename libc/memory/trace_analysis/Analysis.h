@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 The Android Open Source Project
+ * Copyright (C) 2025 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,26 +16,19 @@
 
 #pragma once
 
-#include <sys/cdefs.h>
+#include <ostream>
+#include <string>
 
-#include "platform/bionic/macros.h"
+#include <memory_trace/TraceInfo.h>
 
-// Tracing class for bionic. To begin a trace at a specified point:
-//   ScopedTrace("Trace message");
-// The trace will end when the contructor goes out of scope.
-
-class __LIBC_HIDDEN__ ScopedTrace {
+class Analysis {
  public:
-  explicit ScopedTrace(const char* message);
-  ~ScopedTrace();
+  Analysis() = default;
+  virtual ~Analysis() = default;
 
-  void End();
+  virtual const std::string Name() = 0;
 
- private:
-  bool should_trace_;
-  bool called_end_;
-  BIONIC_DISALLOW_COPY_AND_ASSIGN(ScopedTrace);
+  virtual bool Gather(memory_trace::TraceInfo& info) = 0;
+
+  virtual bool StreamResult(std::ostream& os, const std::string& prefix) = 0;
 };
-
-void bionic_trace_begin(const char* message);
-void bionic_trace_end();

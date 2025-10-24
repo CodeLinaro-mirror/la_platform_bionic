@@ -599,13 +599,13 @@ static void* ReserveWithAlignmentPadding(size_t size, size_t mapping_align, size
     return mmap_ptr;
   }
 
+#if defined(__LP64__)
   // Minimum alignment of shared library gap. For efficiency, this should match the second level
   // page size of the platform.
-#if defined(__LP64__)
   constexpr size_t kGapAlignment = 2 * 1024 * 1024;
-#endif
   // Maximum gap size, in the units of kGapAlignment.
   constexpr size_t kMaxGapUnits = 32;
+#endif
   // Allocate enough space so that the end of the desired region aligned up is still inside the
   // mapping.
   size_t mmap_size = __builtin_align_up(size, mapping_align) + mapping_align - page_size();
@@ -615,9 +615,9 @@ static void* ReserveWithAlignmentPadding(size_t size, size_t mapping_align, size
     return nullptr;
   }
   size_t gap_size = 0;
+#if defined(__LP64__)
   size_t first_byte = reinterpret_cast<size_t>(__builtin_align_up(mmap_ptr, mapping_align));
   size_t last_byte = reinterpret_cast<size_t>(__builtin_align_down(mmap_ptr + mmap_size, mapping_align) - 1);
-#if defined(__LP64__)
   if (first_byte / kGapAlignment != last_byte / kGapAlignment) {
     // This library crosses a 2MB boundary and will fragment a new huge page.
     // Lets take advantage of that and insert a random number of inaccessible huge pages before that
@@ -1091,7 +1091,7 @@ bool ElfReader::LoadSegments() {
  */
 static int _phdr_table_set_load_prot(const ElfW(Phdr)* phdr_table, size_t phdr_count,
                                      ElfW(Addr) load_bias, int extra_prot_flags,
-                                     bool should_pad_segments, bool should_use_16kib_app_compat) {
+                                     bool should_pad_segments) {
   for (size_t i = 0; i < phdr_count; ++i) {
     const ElfW(Phdr)* phdr = &phdr_table[i];
 
@@ -1102,7 +1102,7 @@ static int _phdr_table_set_load_prot(const ElfW(Phdr)* phdr_table, size_t phdr_c
     ElfW(Addr) p_memsz = phdr->p_memsz;
     ElfW(Addr) p_filesz = phdr->p_filesz;
     _extend_load_segment_vma(phdr_table, phdr_count, i, &p_memsz, &p_filesz, should_pad_segments,
-                             should_use_16kib_app_compat);
+                             /*should_use_16kib_app_compat=*/false);
 
     ElfW(Addr) seg_page_start = page_start(phdr->p_vaddr + load_bias);
     ElfW(Addr) seg_page_end = page_end(phdr->p_vaddr + p_memsz + load_bias);
@@ -1150,14 +1150,18 @@ int phdr_table_protect_segments(const ElfW(Phdr)* phdr_table, size_t phdr_count,
                                 ElfW(Addr) load_bias, bool should_pad_segments,
                                 bool should_use_16kib_app_compat,
                                 const GnuPropertySection* prop __unused) {
+  // Segment permissions are handled separately in 16KiB compatibility mode.
+  if (should_use_16kib_app_compat) {
+    return 0;
+  }
+
   int prot = 0;
 #if defined(__aarch64__)
   if ((prop != nullptr) && prop->IsBTICompatible()) {
     prot |= PROT_BTI;
   }
 #endif
-  return _phdr_table_set_load_prot(phdr_table, phdr_count, load_bias, prot, should_pad_segments,
-                                   should_use_16kib_app_compat);
+  return _phdr_table_set_load_prot(phdr_table, phdr_count, load_bias, prot, should_pad_segments);
 }
 
 static bool segment_needs_memtag_globals_remapping(const ElfW(Phdr) * phdr) {
@@ -1307,15 +1311,21 @@ void format_left_truncated_vma_anon_name(char* buffer, size_t buffer_size, const
 int phdr_table_unprotect_segments(const ElfW(Phdr)* phdr_table, size_t phdr_count,
                                   ElfW(Addr) load_bias, bool should_pad_segments,
                                   bool should_use_16kib_app_compat) {
+  // Segment permissions are handled separately in 16KiB compatibility mode. Also in this case
+  // binaries are mapped entirely RW until relro protection is applied, so they don't need to be
+  // unprotected before performing dynamic relocations.
+  if (should_use_16kib_app_compat) {
+    return 0;
+  }
+
   return _phdr_table_set_load_prot(phdr_table, phdr_count, load_bias, PROT_WRITE,
-                                   should_pad_segments, should_use_16kib_app_compat);
+                                   should_pad_segments);
 }
 
 static inline void _extend_gnu_relro_prot_end(const ElfW(Phdr)* relro_phdr,
                                               const ElfW(Phdr)* phdr_table, size_t phdr_count,
                                               ElfW(Addr) load_bias, ElfW(Addr)* seg_page_end,
-                                              bool should_pad_segments,
-                                              bool should_use_16kib_app_compat) {
+                                              bool should_pad_segments) {
   // Find the index and phdr of the LOAD containing the GNU_RELRO segment
   for (size_t index = 0; index < phdr_count; ++index) {
     const ElfW(Phdr)* phdr = &phdr_table[index];
@@ -1363,7 +1373,7 @@ static inline void _extend_gnu_relro_prot_end(const ElfW(Phdr)* relro_phdr,
       // mprotect will only RO protect a part of the extended RW LOAD segment, which
       // will leave an extra split RW VMA (the gap).
       _extend_load_segment_vma(phdr_table, phdr_count, index, &p_memsz, &p_filesz,
-                               should_pad_segments, should_use_16kib_app_compat);
+                               should_pad_segments, /*should_use_16kib_app_compat=*/false);
 
       *seg_page_end = page_end(phdr->p_vaddr + p_memsz + load_bias);
       return;
@@ -1376,8 +1386,7 @@ static inline void _extend_gnu_relro_prot_end(const ElfW(Phdr)* relro_phdr,
  */
 static int _phdr_table_set_gnu_relro_prot(const ElfW(Phdr)* phdr_table, size_t phdr_count,
                                           ElfW(Addr) load_bias, int prot_flags,
-                                          bool should_pad_segments,
-                                          bool should_use_16kib_app_compat) {
+                                          bool should_pad_segments) {
   const ElfW(Phdr)* phdr = phdr_table;
   const ElfW(Phdr)* phdr_limit = phdr + phdr_count;
 
@@ -1405,7 +1414,7 @@ static int _phdr_table_set_gnu_relro_prot(const ElfW(Phdr)* phdr_table, size_t p
     ElfW(Addr) seg_page_start = page_start(phdr->p_vaddr) + load_bias;
     ElfW(Addr) seg_page_end = page_end(phdr->p_vaddr + phdr->p_memsz) + load_bias;
     _extend_gnu_relro_prot_end(phdr, phdr_table, phdr_count, load_bias, &seg_page_end,
-                               should_pad_segments, should_use_16kib_app_compat);
+                               should_pad_segments);
 
     int ret = mprotect(reinterpret_cast<void*>(seg_page_start),
                        seg_page_end - seg_page_start,
@@ -1436,24 +1445,9 @@ static int _phdr_table_set_gnu_relro_prot(const ElfW(Phdr)* phdr_table, size_t p
  *   0 on success, -1 on failure (error code in errno).
  */
 int phdr_table_protect_gnu_relro(const ElfW(Phdr)* phdr_table, size_t phdr_count,
-                                 ElfW(Addr) load_bias, bool should_pad_segments,
-                                 bool should_use_16kib_app_compat) {
+                                 ElfW(Addr) load_bias, bool should_pad_segments) {
   return _phdr_table_set_gnu_relro_prot(phdr_table, phdr_count, load_bias, PROT_READ,
-                                        should_pad_segments, should_use_16kib_app_compat);
-}
-
-/*
- * Apply RX protection to the compat relro region of the ELF being loaded in
- * 16KiB compat mode.
- *
- * Input:
- *   start  -> start address of the compat relro region.
- *   size   -> size of the compat relro region in bytes.
- * Return:
- *   0 on success, -1 on failure (error code in errno).
- */
-int phdr_table_protect_gnu_relro_16kib_compat(ElfW(Addr) start, ElfW(Addr) size) {
-  return mprotect(reinterpret_cast<void*>(start), size, PROT_READ | PROT_EXEC);
+                                        should_pad_segments);
 }
 
 /* Serialize the GNU relro segments to the given file descriptor. This can be
@@ -1715,7 +1709,7 @@ bool ElfReader::FindPhdr() {
 // It is not considered an error if such section is missing.
 bool ElfReader::FindGnuPropertySection() {
 #if defined(__aarch64__)
-  note_gnu_property_ = GnuPropertySection(phdr_table_, phdr_num_, load_start(), name_.c_str());
+  note_gnu_property_ = GnuPropertySection(phdr_table_, phdr_num_, load_bias_, name_.c_str());
 #endif
   return true;
 }
