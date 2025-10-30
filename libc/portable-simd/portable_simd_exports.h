@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 The Android Open Source Project
+ * Copyright (C) 2025 The Android Open Source Project
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,8 +26,11 @@
  * SUCH DAMAGE.
  */
 
-#include <string.h>
+#pragma once
 
-void* mempcpy(void* dst, const void* src, size_t n) {
-  return reinterpret_cast<char*>(memcpy(dst, src, n)) + n;
+#include <stddef.h>
+
+extern "C" {
+size_t portable_simd_strlen_sse(const char*);
+size_t portable_simd_strlen_avx2(const char*);
 }
