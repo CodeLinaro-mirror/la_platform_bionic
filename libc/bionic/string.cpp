@@ -26,6 +26,12 @@
  * SUCH DAMAGE.
  */
 
+// FORTIFY only provides value when the size of the buffer can be
+// statically determined, and that's never the case with any calls
+// here. b/454067908 shows that leaving it enabled leads to
+// suboptimal codegen.
+#undef _FORTIFY_SOURCE
+
 #include <string.h>
 #include <xlocale.h>
 
@@ -33,11 +39,54 @@
 // Core functionality.
 //
 
+#if !defined(__x86_64__)
+void* memccpy(void* dst, const void* src, int c, size_t n) {
+  const char* p = static_cast<const char*>(memchr(src, c, n));
+  if (p != nullptr) {
+    n = p - static_cast<const char*>(src) + 1;
+    memcpy(dst, src, n);
+    return static_cast<char*>(dst) + n;
+  }
+  memcpy(dst, src, n);
+  return nullptr;
+}
+#endif
+
+void* mempcpy(void* dst, const void* src, size_t n) {
+  return reinterpret_cast<char*>(memcpy(dst, src, n)) + n;
+}
+
 // https://github.com/ARM-software/optimized-routines/issues/89
 #if defined(__aarch64__)
 char* strcat(char* dst, const char* src) {
   strcpy(dst + strlen(dst), src);
   return dst;
+}
+#endif
+
+#if defined(__arm__) || defined(__aarch64__) || defined(__riscv)
+__attribute__((__flatten__))
+char* stpncpy(char* dst, const char* src, size_t dst_n) {
+  size_t src_n = strnlen(src, dst_n);
+  memcpy(dst, src, src_n);
+  memset(dst + src_n, 0, dst_n - src_n);
+  return dst + src_n;
+}
+#endif
+
+#if defined(__arm__) || defined(__aarch64__)
+__attribute__((__flatten__))
+char* strncpy(char* dst, const char* src, size_t n) {
+  stpncpy(dst, src, n);
+  return dst;
+}
+#endif
+
+// If you have a fast memchr(), but not a strnlen().
+#if defined(__x86_64__)
+size_t strnlen(const char* s, size_t n) {
+  const char* nul = static_cast<const char*>(memchr(s, '\0', n));
+  return nul ? (nul - s) : n;
 }
 #endif
 
