@@ -32,7 +32,9 @@
 // suboptimal codegen.
 #undef _FORTIFY_SOURCE
 
+#include <stdlib.h>
 #include <string.h>
+#include <sys/param.h>
 #include <xlocale.h>
 
 //
@@ -79,6 +81,18 @@ __attribute__((__flatten__))
 char* strncpy(char* dst, const char* src, size_t n) {
   stpncpy(dst, src, n);
   return dst;
+}
+#endif
+
+#if defined(__arm__) || defined(__aarch64__)
+__attribute__((__flatten__))
+char* strncat(char* dst, const char* src, size_t n) {
+  char* result = dst;
+  dst += strlen(dst);
+  // strncat() writes just one NUL, unlike strncpy().
+  char* end = static_cast<char*>(mempcpy(dst, src, strnlen(src, n)));
+  *end = '\0';
+  return result;
 }
 #endif
 
@@ -220,3 +234,26 @@ size_t strxfrm(char* dst, const char* src, size_t n) {
   return strlcpy(dst, src, n);
 }
 __strong_alias(strxfrm_l, strxfrm);
+
+//
+// String duplication functions.
+//
+
+char* strdup(const char* s) {
+  size_t n = strlen(s) + 1;
+  char* result = static_cast<char*>(malloc(n));
+  if (result != nullptr) {
+    memcpy(result, s, n);
+  }
+  return result;
+}
+
+char* strndup(const char* s, size_t n) {
+  n = strnlen(s, n);
+  char* result = static_cast<char*>(malloc(n + 1));
+  if (result != nullptr) {
+    memcpy(result, s, n);
+    result[n] = '\0';
+  }
+  return result;
+}
