@@ -31,6 +31,10 @@
 #include <stddef.h>
 
 extern "C" {
+void* portable_simd_memchr_sse(const void*, int, size_t);
+void* portable_simd_memchr_avx2(const void*, int, size_t);
+void* portable_simd_memrchr_sse(const void*, int, size_t);
+void* portable_simd_memrchr_avx2(const void*, int, size_t);
 size_t portable_simd_strlen_sse(const char*);
 size_t portable_simd_strlen_avx2(const char*);
 }
