@@ -1273,7 +1273,6 @@ genrule {
 cc_library_static {
     name: "libc_syscalls",
     defaults: ["libc_defaults"],
-    srcs: ["bionic/__set_errno.cpp"],
     sdclang: false,
     arch: {
         arm: {
