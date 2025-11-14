@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 The Android Open Source Project
+ * Copyright (C) 2025 The Android Open Source Project
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,37 +26,29 @@
  * SUCH DAMAGE.
  */
 
-#include <platform/bionic/tls_defines.h>
-#include <private/bionic_asm.h>
-#include <asm/signal.h>
-#include <linux/sched.h>
+#include <inttypes.h>
+#include <stdlib.h>
 
-ENTRY(vfork)
-  // t0 = __get_tls()[TLS_SLOT_THREAD_ID]
-  mv      t0, tp
-  ld      t0, TLS_SLOT_THREAD_ID * 8(t0)
+template <typename T>
+T Abs(T n) {
+  return (n < 0) ? -n : n;
+}
 
-  // Set cached_pid_ to 0, vforked_ to 1, and stash the previous value.
-  li      t1, 0x80000000
-  lw      t2, 20(t0)
-  sw      t1, 20(t0)
+// These are all clang builtins so these functions are never normally called,
+// but we've historically had symbols anyway.
 
-  li      a0, (CLONE_VM | CLONE_VFORK | SIGCHLD)
-  li      a1, 0 //uses a duplicate of the parent's stack
-  li      a2, 0
-  li      a3, 0
-  li      a4, 0
+int abs(int n) {
+  return Abs(n);
+}
 
-  li      a7, __NR_clone
-  ecall
+long labs(long n) {
+  return Abs(n);
+}
 
-  // Are we the child? Return if so.
-  bnez    a0, L(not_child)
-  ret
+long long llabs(long long n) {
+  return Abs(n);
+}
 
-  // Not the child: restore the previous cached_pid_/vforked_ values
-  // and then report syscall success/failure as normal.
-L(not_child):
-  sw      t2, 20(t0)
-  DO_SYSCALL_RETURN
-END(vfork)
+intmax_t imaxabs(intmax_t n) {
+  return Abs(n);
+}
