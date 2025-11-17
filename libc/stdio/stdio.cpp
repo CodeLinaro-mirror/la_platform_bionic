@@ -104,8 +104,6 @@ FILE* stdin = &__sF[0];
 FILE* stdout = &__sF[1];
 FILE* stderr = &__sF[2];
 
-static pthread_mutex_t __stdio_mutex = PTHREAD_MUTEX_INITIALIZER;
-
 static uint64_t __get_file_tag(FILE* fp) {
   // Don't use a tag for the standard streams.
   // They don't really own their file descriptors, because the values are well-known, and you're
@@ -126,6 +124,7 @@ struct glue {
   int niobs;
   FILE* iobs;
 };
+static pthread_mutex_t __sglue_mutex = PTHREAD_MUTEX_INITIALIZER;
 struct glue __sglue = { nullptr, 3, __sF };
 static struct glue* lastglue = &__sglue;
 
@@ -164,9 +163,10 @@ static glue* moreglue(int n) {
 }
 
 static inline void free_fgetln_buffer(FILE* fp) {
-  if (__predict_false(fp->_lb._base != nullptr)) {
-    free(fp->_lb._base);
-    fp->_lb._base = nullptr;
+  if (__predict_false(fp->fgetln_buffer._base != nullptr)) {
+    free(fp->fgetln_buffer._base);
+    fp->fgetln_buffer._base = nullptr;
+    fp->fgetln_buffer._size = 0;
   }
 }
 
@@ -178,7 +178,7 @@ FILE* __sfp(void) {
   int n;
   struct glue *g;
 
-  pthread_mutex_lock(&__stdio_mutex);
+  pthread_mutex_lock(&__sglue_mutex);
   for (g = &__sglue; g != nullptr; g = g->next) {
     for (fp = g->iobs, n = g->niobs; --n >= 0; fp++) {
       if (fp->_flags == 0) goto found;
@@ -186,15 +186,15 @@ FILE* __sfp(void) {
   }
 
   /* release lock while mallocing */
-  pthread_mutex_unlock(&__stdio_mutex);
+  pthread_mutex_unlock(&__sglue_mutex);
   if ((g = moreglue(NDYNAMIC)) == nullptr) return nullptr;
-  pthread_mutex_lock(&__stdio_mutex);
+  pthread_mutex_lock(&__sglue_mutex);
   lastglue->next = g;
   lastglue = g;
   fp = g->iobs;
 found:
   fp->_flags = 1;  /* reserve this slot; caller sets real flags */
-  pthread_mutex_unlock(&__stdio_mutex);
+  pthread_mutex_unlock(&__sglue_mutex);
   fp->_p = nullptr;  /* no current pointer */
   fp->_w = 0;  /* nothing to read or write */
   fp->_r = 0;
@@ -203,8 +203,7 @@ found:
   fp->_lbfsize = 0;  /* not line buffered */
   fp->_file = -1;  /* no file */
 
-  fp->_lb._base = nullptr;  /* no line buffer */
-  fp->_lb._size = 0;
+  fp->fgetln_buffer = {};
 
   memset(_EXT(fp), 0, sizeof(struct __sfileext));
   _EXT(fp)->_lock = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
@@ -219,15 +218,17 @@ found:
 }
 
 int _fwalk(int (*callback)(FILE*)) {
+  pthread_mutex_lock(&__sglue_mutex);
   int result = 0;
   for (glue* g = &__sglue; g != nullptr; g = g->next) {
     FILE* fp = g->iobs;
     for (int n = g->niobs; --n >= 0; ++fp) {
-      if (fp->_flags != 0 && (fp->_flags & __SIGN) == 0) {
+      if (fp->_flags != 0) {
         result |= (*callback)(fp);
       }
     }
   }
+  pthread_mutex_unlock(&__sglue_mutex);
   return result;
 }
 
@@ -517,7 +518,6 @@ FILE* freopen(const char* file, const char* mode, FILE* fp) {
   _UB(fp)._size = 0;
   WCIO_FREE(fp);
   free_fgetln_buffer(fp);
-  fp->_lb._size = 0;
 
   if (fd < 0) { // Did not get it after all.
     fp->_flags = 0; // Release.
@@ -905,10 +905,11 @@ char* fgetln(FILE* fp, size_t* length_ptr) {
   ScopedFileLock sfl(fp);
   // Implementing fgetln() in terms of getdelim() means lines are actually always NUL terminated.
   // We could explicitly overwrite the NUL to be "bug compatible", but that seems silly?
-  ssize_t n = getdelim(reinterpret_cast<char**>(&fp->_lb._base), &fp->_lb._size, '\n', fp);
+  ssize_t n = getdelim(reinterpret_cast<char**>(&fp->fgetln_buffer._base),
+                       &fp->fgetln_buffer._size, '\n', fp);
   if (n <= 0) return nullptr;
   *length_ptr = n;
-  return reinterpret_cast<char*>(fp->_lb._base);
+  return reinterpret_cast<char*>(fp->fgetln_buffer._base);
 }
 
 char* fgets(char* buf, int n, FILE* fp) {
@@ -1302,6 +1303,45 @@ int vsnprintf(char* s, size_t n, const char* fmt, va_list ap) {
 
 int vsprintf(char* s, const char* fmt, va_list ap) {
   return vsnprintf(s, SSIZE_MAX, fmt, ap);
+}
+
+int vsscanf(const char* s, const char* fmt, va_list ap) {
+  FILE f;
+  __sfileext fext;
+  _FILEEXT_SETUP(&f, &fext);
+  f._flags = __SRD;
+  f._bf._base = f._p = reinterpret_cast<unsigned char*>(const_cast<char*>(s));
+  f._bf._size = f._r = strlen(s);
+  f._read = [](void*, char*, int) { return 0; };
+  return __svfscanf(&f, fmt, ap);
+}
+
+int vswscanf(const wchar_t* str, const wchar_t* fmt, va_list ap) {
+  // We convert the wide character string to multibyte, which __vfwscanf() will convert back to
+  // wide characters, but no-one really cares about the wchar_t stuff so this isn't worth improving.
+  size_t len = wcslen(str) * MB_CUR_MAX;
+  char* mbstr = static_cast<char*>(malloc(len + 1));
+  if (mbstr == nullptr) return EOF;
+
+  const wchar_t* strp = str;
+  mbstate_t mbs = {};
+  size_t mlen = wcsrtombs(mbstr, &strp, len, &mbs);
+  if (mlen == static_cast<size_t>(-1)) {
+    free(mbstr);
+    return EOF;
+  }
+  if (mlen == len) mbstr[len] = '\0';
+
+  FILE f;
+  struct __sfileext fext;
+  _FILEEXT_SETUP(&f, &fext);
+  f._flags = __SRD;
+  f._bf._base = f._p = reinterpret_cast<unsigned char*>(mbstr);
+  f._bf._size = f._r = mlen;
+  f._read = [](void*, char*, int) { return 0; };
+  int r = __vfwscanf(&f, fmt, ap);
+  free(mbstr);
+  return r;
 }
 
 int vwprintf(const wchar_t* fmt, va_list ap) {
