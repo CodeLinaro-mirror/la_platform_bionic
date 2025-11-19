@@ -1134,6 +1134,7 @@ cc_library_static {
                 "arch-riscv64/string/strncat.S",
                 "arch-riscv64/string/strncmp.S",
                 "arch-riscv64/string/strnlen.S",
+                "arch-riscv64/string/strrchr.S",
             ],
         },
 
