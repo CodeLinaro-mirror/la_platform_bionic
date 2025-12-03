@@ -129,6 +129,13 @@ TEST(STDIO_TEST, flockfile_18208568_stderr) {
   funlockfile(stderr);
 }
 
+TEST(STDIO_TEST, flockfile_18208568_ftrylock) {
+  // Same test but for ftrylockfile().
+  ASSERT_EQ(0, ftrylockfile(stderr));
+  ASSERT_EQ(0, feof(stderr));
+  funlockfile(stderr);
+}
+
 TEST(STDIO_TEST, flockfile_18208568_regular) {
   // We never had a bug for streams other than stdin/stdout/stderr, but test anyway.
   FILE* fp = fopen("/dev/null", "w");
@@ -138,6 +145,19 @@ TEST(STDIO_TEST, flockfile_18208568_regular) {
   // something that will take the lock.
   ASSERT_EQ(0, feof(fp));
   funlockfile(fp);
+  fclose(fp);
+}
+
+TEST(STDIO_TEST, ftrylockfile) {
+  FILE* fp = fopen("/dev/null", "w");
+  // If we lock it on this thread...
+  ASSERT_EQ(0, ftrylockfile(fp));
+
+  std::thread([=] {
+    // ...we can't lock it on another thread.
+    ASSERT_EQ(EBUSY, ftrylockfile(fp));
+  }).join();
+
   fclose(fp);
 }
 
@@ -260,6 +280,20 @@ TEST(STDIO_TEST, getdelim_directory) {
   size_t allocated_length;
   ASSERT_EQ(-1, getdelim(&word_read, &allocated_length, ' ', fp));
   fclose(fp);
+}
+
+// https://sourceware.org/bugzilla/show_bug.cgi?id=28038
+TEST(STDIO_TEST, getdelim_eof_terminator) {
+  FILE* fp = tmpfile();
+  ASSERT_TRUE(fp != nullptr);
+  char* line = static_cast<char*>(malloc(1));
+  size_t allocated_length = 1;
+  *line = 'x';
+  ASSERT_EQ(-1, getdelim(&line, &allocated_length, '\n', fp));
+  EXPECT_GT(allocated_length, 0u);
+  EXPECT_EQ('\0', line[0]);
+  fclose(fp);
+  free(line);
 }
 
 TEST(STDIO_TEST, fgetln) {
@@ -506,7 +540,8 @@ TEST_F(STDIO_DEATHTEST, snprintf_n) {
   // http://b/14492135 and http://b/31832608.
   char buf[32];
   int i = 1234;
-  EXPECT_DEATH(snprintf(buf, sizeof(buf), "a %n b", &i), "%n not allowed on Android");
+  EXPECT_EXIT(snprintf(buf, sizeof(buf), "a %n b", &i),
+              testing::KilledBySignal(SIGABRT), "%n not allowed on Android");
 #pragma clang diagnostic pop
 #else
   GTEST_SKIP() << "glibc does allow %n";
@@ -520,7 +555,8 @@ TEST_F(STDIO_DEATHTEST, swprintf_n) {
   // http://b/14492135 and http://b/31832608.
   wchar_t buf[32];
   int i = 1234;
-  EXPECT_DEATH(swprintf(buf, sizeof(buf), L"a %n b", &i), "%n not allowed on Android");
+  EXPECT_EXIT(swprintf(buf, sizeof(buf), L"a %n b", &i),
+              testing::KilledBySignal(SIGABRT), "%n not allowed on Android");
 #pragma clang diagnostic pop
 #else
   GTEST_SKIP() << "glibc does allow %n";
@@ -3096,27 +3132,52 @@ static int64_t GetTotalRamGiB() {
 }
 #endif
 
-TEST(STDIO_TEST, fread_int_overflow) {
-#if defined(__LP64__)
-  if (GetTotalRamGiB() <= 4) GTEST_SKIP() << "not enough memory";
+TEST(STDIO_TEST, fread_EOVERFLOW) {
+  TemporaryFile tf;
+  FILE* fp = fopen(tf.path, "r");
+  ASSERT_TRUE(fp != nullptr);
 
-  const size_t too_big_for_an_int = 0x80000000ULL;
-  std::vector<char> buf(too_big_for_an_int);
-  std::unique_ptr<FILE, decltype(&fclose)> fp{fopen("/dev/zero", "re"), fclose};
-  ASSERT_EQ(too_big_for_an_int, fread(&buf[0], 1, too_big_for_an_int, fp.get()));
-#else
-  GTEST_SKIP() << "32-bit can't allocate 2GiB";
-#endif
+  volatile size_t big = SIZE_MAX;
+  char buf[BUFSIZ];
+  errno = 0;
+  ASSERT_EQ(0u, fread(buf, big, big, fp));
+  ASSERT_ERRNO(EOVERFLOW);
+  ASSERT_TRUE(ferror(fp));
+  fclose(fp);
 }
 
-TEST(STDIO_TEST, fwrite_int_overflow) {
+TEST(STDIO_TEST, fwrite_EOVERFLOW) {
+  TemporaryFile tf;
+  FILE* fp = fopen(tf.path, "w");
+  ASSERT_TRUE(fp != nullptr);
+
+  volatile size_t big = SIZE_MAX;
+  char buf[BUFSIZ];
+  errno = 0;
+  ASSERT_EQ(0u, fwrite(buf, big, big, fp));
+  ASSERT_ERRNO(EOVERFLOW);
+  ASSERT_TRUE(ferror(fp));
+  fclose(fp);
+}
+
+TEST(STDIO_TEST, fread_fwrite_int_overflow) {
 #if defined(__LP64__)
   if (GetTotalRamGiB() <= 4) GTEST_SKIP() << "not enough memory";
 
+  // Historically the implementation used ints where it should have used size_t.
   const size_t too_big_for_an_int = 0x80000000ULL;
   std::vector<char> buf(too_big_for_an_int);
-  std::unique_ptr<FILE, decltype(&fclose)> fp{fopen("/dev/null", "we"), fclose};
-  ASSERT_EQ(too_big_for_an_int, fwrite(&buf[0], 1, too_big_for_an_int, fp.get()));
+
+  // We test both fread() and fwrite() in the same function to avoid two tests
+  // both allocating 2GiB of ram at the same time.
+  {
+    std::unique_ptr<FILE, decltype(&fclose)> fp{fopen("/dev/zero", "re"), fclose};
+    ASSERT_EQ(too_big_for_an_int, fread(&buf[0], 1, too_big_for_an_int, fp.get()));
+  }
+  {
+    std::unique_ptr<FILE, decltype(&fclose)> fp{fopen("/dev/null", "we"), fclose};
+    ASSERT_EQ(too_big_for_an_int, fwrite(&buf[0], 1, too_big_for_an_int, fp.get()));
+  }
 #else
   GTEST_SKIP() << "32-bit can't allocate 2GiB";
 #endif
@@ -3428,7 +3489,8 @@ TEST_F(STDIO_DEATHTEST, snprintf_invalid_w_width) {
 #pragma clang diagnostic ignored "-Wformat-invalid-specifier"
   char buf[BUFSIZ];
   int32_t a = 100;
-  EXPECT_DEATH(snprintf(buf, sizeof(buf), "%w20d", &a), "%w20 is unsupported");
+  EXPECT_EXIT(snprintf(buf, sizeof(buf), "%w20d", &a),
+              testing::KilledBySignal(SIGABRT), "%w20 is unsupported");
 #pragma clang diagnostic pop
 #else
   GTEST_SKIP() << "no %w in glibc";
@@ -3441,7 +3503,8 @@ TEST_F(STDIO_DEATHTEST, swprintf_invalid_w_width) {
 #pragma clang diagnostic ignored "-Wformat-invalid-specifier"
   wchar_t buf[BUFSIZ];
   int32_t a = 100;
-  EXPECT_DEATH(swprintf(buf, sizeof(buf), L"%w20d", &a), "%w20 is unsupported");
+  EXPECT_EXIT(swprintf(buf, sizeof(buf), L"%w20d", &a),
+              testing::KilledBySignal(SIGABRT), "%w20 is unsupported");
 #pragma clang diagnostic pop
 #else
   GTEST_SKIP() << "no %w in glibc";
@@ -3578,7 +3641,8 @@ TEST_F(STDIO_DEATHTEST, snprintf_invalid_wf_width) {
 #pragma clang diagnostic ignored "-Wformat-invalid-specifier"
   char buf[BUFSIZ];
   int_fast32_t a = 100;
-  EXPECT_DEATH(snprintf(buf, sizeof(buf), "%wf20d", &a), "%wf20 is unsupported");
+  EXPECT_EXIT(snprintf(buf, sizeof(buf), "%wf20d", &a),
+              testing::KilledBySignal(SIGABRT), "%wf20 is unsupported");
 #pragma clang diagnostic pop
 #else
   GTEST_SKIP() << "no %w in glibc";
@@ -3592,7 +3656,8 @@ TEST_F(STDIO_DEATHTEST, swprintf_invalid_wf_width) {
 #pragma clang diagnostic ignored "-Wformat-invalid-specifier"
   wchar_t buf[BUFSIZ];
   int_fast32_t a = 100;
-  EXPECT_DEATH(swprintf(buf, sizeof(buf), L"%wf20d", &a), "%wf20 is unsupported");
+  EXPECT_EXIT(swprintf(buf, sizeof(buf), L"%wf20d", &a),
+              testing::KilledBySignal(SIGABRT), "%wf20 is unsupported");
 #pragma clang diagnostic pop
 #else
   GTEST_SKIP() << "no %w in glibc";
@@ -3690,9 +3755,11 @@ TEST_F(STDIO_DEATHTEST, sscanf_invalid_w_or_wf_width) {
 #pragma clang diagnostic ignored "-Wformat"
 #pragma clang diagnostic ignored "-Wformat-invalid-specifier"
   int32_t a;
-  EXPECT_DEATH(sscanf("<100>", "<%w20d>", &a), "%w20 is unsupported");
+  EXPECT_EXIT(sscanf("<100>", "<%w20d>", &a),
+              testing::KilledBySignal(SIGABRT), "%w20 is unsupported");
   int_fast32_t fast_a;
-  EXPECT_DEATH(sscanf("<100>", "<%wf20d>", &fast_a), "%wf20 is unsupported");
+  EXPECT_EXIT(sscanf("<100>", "<%wf20d>", &fast_a),
+              testing::KilledBySignal(SIGABRT), "%wf20 is unsupported");
 #pragma clang diagnostic pop
 #else
   GTEST_SKIP() << "no %w in glibc";
@@ -3790,9 +3857,11 @@ TEST_F(STDIO_DEATHTEST, swscanf_invalid_w_or_wf_width) {
 #pragma clang diagnostic ignored "-Wformat"
 #pragma clang diagnostic ignored "-Wformat-invalid-specifier"
   int32_t a;
-  EXPECT_DEATH(swscanf(L"<100>", L"<%w20d>", &a), "%w20 is unsupported");
+  EXPECT_EXIT(swscanf(L"<100>", L"<%w20d>", &a),
+              testing::KilledBySignal(SIGABRT), "%w20 is unsupported");
   int_fast32_t fast_a;
-  EXPECT_DEATH(swscanf(L"<100>", L"<%wf20d>", &fast_a), "%wf20 is unsupported");
+  EXPECT_EXIT(swscanf(L"<100>", L"<%wf20d>", &fast_a),
+              testing::KilledBySignal(SIGABRT), "%wf20 is unsupported");
 #pragma clang diagnostic pop
 #else
   GTEST_SKIP() << "no %w in glibc";
@@ -3804,4 +3873,31 @@ TEST(STDIO_TEST, printf_lc_0) {
   char buf[BUFSIZ];
   EXPECT_EQ(3, snprintf(buf, sizeof(buf), "<%lc>", L'\0'));
   EXPECT_TRUE(!memcmp(buf, "<\0>", 3));
+}
+
+// https://sourceware.org/bugzilla/show_bug.cgi?id=26557
+// TL;DR: "does open_memstream() maintain the file length correctly?"
+static void glibc_bug_26557_helper(FILE* fp) {
+  char data[32] = {};
+  EXPECT_EQ(24u, fwrite(data, 1, 24, fp));
+  EXPECT_EQ(24, ftell(fp));
+  EXPECT_EQ(0, fseek(fp, 0, SEEK_SET));
+  EXPECT_EQ(4u, fwrite(data, 1, 4, fp));
+  EXPECT_EQ(0, fseek(fp, 0, SEEK_END));
+  EXPECT_EQ(24, ftell(fp));
+  EXPECT_EQ(0, fclose(fp));
+}
+
+TEST(STDIO_TEST, glibc_bug_26557_fopen) {
+  glibc_bug_26557_helper(tmpfile());
+}
+
+TEST(STDIO_TEST, glibc_bug_26557_fmemopen) {
+  glibc_bug_26557_helper(fmemopen(nullptr, 32, "wb"));
+}
+
+TEST(STDIO_TEST, glibc_bug_26557_open_memstream) {
+  char* p = new char[32];
+  size_t size = 32;
+  glibc_bug_26557_helper(open_memstream(&p, &size));
 }

@@ -232,9 +232,11 @@ int _fwalk(int (*callback)(FILE*)) {
   return result;
 }
 
-extern "C" __LIBC_HIDDEN__ void __libc_stdio_cleanup(void) {
-  // Equivalent to fflush(nullptr), but without all the locking since we're shutting down anyway.
-  _fwalk(__sflush);
+extern "C" __LIBC_HIDDEN__ void __libc_stdio_cleanup() {
+  // This matches our historical behavior, but what about code that writes after this runs?
+  // glibc sets all streams to unbuffered (so future writes go straight out).
+  // musl takes the locks but keeps them held (so future writes deadlock).
+  fflush(nullptr);
 }
 
 /*
@@ -317,6 +319,16 @@ int __srefill(FILE* fp) {
     return EOF;
   }
   return 0;
+}
+
+// Handle getc() when the buffer ran out: refill then return the first new byte buffer.
+int __srget(FILE* fp) {
+  _SET_ORIENTATION(fp, -1);
+  if (__srefill(fp) == 0) {
+    fp->_r--;
+    return (*fp->_p++);
+  }
+  return EOF;
 }
 
 /*
@@ -441,6 +453,7 @@ FILE* fdopen(int fd, const char* mode) {
 
 FILE* freopen(const char* file, const char* mode, FILE* fp) {
   CHECK_FP(fp);
+  ScopedFileLock sfl(fp);
 
   // POSIX says: "If pathname is a null pointer, the freopen() function shall
   // attempt to change the mode of the stream to that specified by mode, as if
@@ -462,8 +475,6 @@ FILE* freopen(const char* file, const char* mode, FILE* fp) {
     fclose(fp);
     return nullptr;
   }
-
-  ScopedFileLock sfl(fp);
 
   // TODO: rewrite this mess completely.
 
@@ -548,12 +559,6 @@ __strong_alias(freopen64, freopen);
 int fclose(FILE* fp) {
   CHECK_FP(fp);
 
-  if (fp->_flags == 0) {
-    // Already freed!
-    errno = EBADF;
-    return EOF;
-  }
-
   ScopedFileLock sfl(fp);
   WCIO_FREE(fp);
   int r = fp->_flags & __SWR ? __sflush(fp) : 0;
@@ -634,7 +639,7 @@ int ferror(FILE* fp) {
 }
 
 int __sflush(FILE* fp) {
-  // Flushing a read-only file is a no-op.
+  // Flushing is a no-op if we're not currently writing.
   if ((fp->_flags & __SWR) == 0) return 0;
 
   // Flushing a file without a buffer is a no-op.
@@ -729,7 +734,7 @@ static off64_t __ftello64_unlocked(FILE* fp) {
   return result;
 }
 
-int __fseeko64(FILE* fp, off64_t offset, int whence, int off_t_bits) {
+static int __fseeko64(FILE* fp, off64_t offset, int whence, int off_t_bits) {
   ScopedFileLock sfl(fp);
 
   // Change any SEEK_CUR to SEEK_SET, and check `whence` argument.
@@ -1247,6 +1252,27 @@ int swscanf(const wchar_t* s, const wchar_t* fmt, ...) {
   PRINTF_IMPL(vswscanf(s, fmt, ap));
 }
 
+int vdprintf(int fd, const char* fmt, va_list ap) {
+  unsigned char buf[BUFSIZ] __attribute__((__uninitialized__));
+
+  FILE f;
+  struct __sfileext fext;
+  _FILEEXT_SETUP(&f, &fext);
+  f._bf._base = f._p = buf;
+  f._bf._size = f._w = sizeof(buf);
+  f._flags = __SWR;
+  f._file = -1;
+  f._cookie = &fd;
+  f._write = [](void* cookie, const char* buf, int n) -> int {
+    int* fd_ptr = static_cast<int*>(cookie);
+    return TEMP_FAILURE_RETRY(write(*fd_ptr, buf, n));
+  };
+
+  int byte_count = __vfprintf(&f, fmt, ap);
+  if (byte_count >= 0 && __sflush(&f)) return EOF;
+  return byte_count;
+}
+
 int vfprintf(FILE* fp, const char* fmt, va_list ap) {
   ScopedFileLock sfl(fp);
   return __vfprintf(fp, fmt, ap);
@@ -1381,15 +1407,7 @@ int fflush_unlocked(FILE* fp) {
 
 int fpurge(FILE* fp) {
   CHECK_FP(fp);
-
   ScopedFileLock sfl(fp);
-
-  if (fp->_flags == 0) {
-    // Already freed!
-    errno = EBADF;
-    return EOF;
-  }
-
   if (HASUB(fp)) FREEUB(fp);
   WCIO_FREE(fp);
   fp->_p = fp->_bf._base;

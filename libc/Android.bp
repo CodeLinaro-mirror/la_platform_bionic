@@ -498,11 +498,9 @@ cc_library_static {
         "upstream-openbsd/lib/libc/stdio/mktemp.c",
         "upstream-openbsd/lib/libc/stdio/open_memstream.c",
         "upstream-openbsd/lib/libc/stdio/open_wmemstream.c",
-        "upstream-openbsd/lib/libc/stdio/rget.c",
         "upstream-openbsd/lib/libc/stdio/ungetc.c",
         "upstream-openbsd/lib/libc/stdio/ungetwc.c",
         "upstream-openbsd/lib/libc/stdio/vasprintf.c",
-        "upstream-openbsd/lib/libc/stdio/vdprintf.c",
         "upstream-openbsd/lib/libc/stdio/vswprintf.c",
         "upstream-openbsd/lib/libc/stdio/wbuf.c",
         "upstream-openbsd/lib/libc/stdio/wsetup.c",
@@ -537,7 +535,6 @@ cc_library_static {
         },
         arm64: {
             srcs: [
-                "upstream-openbsd/lib/libc/string/strcat.c",
                 "upstream-openbsd/lib/libc/string/stpncpy.c",
                 "upstream-openbsd/lib/libc/string/strncat.c",
                 "upstream-openbsd/lib/libc/string/strncpy.c",
@@ -707,7 +704,7 @@ cc_library_static {
 // icu4x_bionic.a - Thin Rust wrapper around ICU4X
 // ========================================================
 
-rust_ffi_static {
+rust_library_rlib {
     name: "libicu4x_bionic",
     crate_name: "icu4x_bionic",
     crate_root: "bionic/icu4x.rs",
@@ -729,6 +726,7 @@ rust_ffi_static {
     recovery_available: true,
     native_bridge_supported: true,
     sdk_version: "minimum",
+    no_stdlibs: true,
     defaults: ["linux_bionic_supported"],
 }
 
@@ -736,7 +734,11 @@ rust_ffi_static {
 // go/android-mto-staticlibs-in-make
 cc_rustlibs_for_make {
     name: "libstatic_rustlibs_for_make",
-    whole_static_libs: ["libicu4x_bionic"],
+    whole_static_libs: [
+        "libicu4x_bionic",
+        "libbionic_panic_abort",
+        "liblibc_alloc_rust",
+    ],
     apex_available: [
         "//apex_available:platform",
         "//apex_available:anyapex",
@@ -930,10 +932,10 @@ cc_library_static {
         "bionic/socketpair.cpp",
         "bionic/spawn.cpp",
         "bionic/stat.cpp",
-        "bionic/stdlib_l.cpp",
         "bionic/strerror.cpp",
-        "bionic/string_l.cpp",
+        "bionic/string.cpp",
         "bionic/strsignal.cpp",
+        "bionic/strtod.cpp",
         "bionic/strtol.cpp",
         "bionic/strtold.cpp",
         "bionic/swab.cpp",
@@ -1068,6 +1070,7 @@ cc_library_static {
                 "arch-riscv64/string/stpcpy.S",
                 "arch-riscv64/string/strcat.S",
                 "arch-riscv64/string/strchr.S",
+                "arch-riscv64/string/strchrnul.S",
                 "arch-riscv64/string/strcmp.S",
                 "arch-riscv64/string/strcpy.S",
                 "arch-riscv64/string/strlen.S",
@@ -1116,6 +1119,8 @@ cc_library_static {
 
                 "arch-x86_64/string/avx2-memmove-kbl.S",
                 "arch-x86_64/string/avx2-memset-kbl.S",
+                "arch-x86_64/string/memchr.S",
+                "arch-x86_64/string/memrchr.S",
                 "arch-x86_64/string/sse2-memmove-slm.S",
                 "arch-x86_64/string/sse2-memset-slm.S",
                 "arch-x86_64/string/sse2-stpcpy-slm.S",
@@ -1128,6 +1133,8 @@ cc_library_static {
                 "arch-x86_64/string/sse4-memcmp-slm.S",
                 "arch-x86_64/string/ssse3-strcmp-slm.S",
                 "arch-x86_64/string/ssse3-strncmp-slm.S",
+                "arch-x86_64/string/strchr.S",
+                "arch-x86_64/string/strrchr.S",
             ],
         },
     },
@@ -1353,7 +1360,21 @@ cc_library_static {
     whole_static_libs: [
         "libc_common",
         "libc_dynamic_dispatch",
+        "libbionic_panic_abort",
+        "liblibc_alloc_rust",
     ],
+
+    target: {
+        linux_bionic: {
+            exclude_static_libs: [
+                "libbionic_panic_abort",
+                "liblibc_alloc_rust",
+            ],
+            whole_static_libs: [
+                "libstd",
+            ],
+        },
+    },
 }
 
 // Versions of dl_iterate_phdr and similar APIs used to lookup unwinding information in a static
@@ -1431,6 +1452,19 @@ filegroup {
 }
 
 // ========================================================
+// libc_sources_arc4random
+// linker_phdr dependency required by linker-unit-tests
+// ========================================================
+filegroup {
+    name: "libc_sources_arc4random",
+    defaults: ["libc_defaults"],
+    srcs: [
+        "bionic/bionic_arc4random.cpp",
+    ],
+    visibility: ["//bionic/linker"],
+}
+
+// ========================================================
 // libc.a + libc.so
 // ========================================================
 cc_defaults {
@@ -1454,6 +1488,7 @@ cc_defaults {
             "libc_init_static",
             "libc_common_static",
             "libc_unwind_static",
+            "libstd",
         ],
     },
     shared: {
@@ -1648,6 +1683,7 @@ cc_library_headers {
         "//system/core/libcutils:__subpackages__",
         "//system/memory/libmemunreachable:__subpackages__",
         "//system/unwinding/libunwindstack:__subpackages__",
+        "//system/librustutils:__subpackages__",
         "//tools/security/sanitizer-status:__subpackages__",
         "//vendor:__subpackages__",
     ],
@@ -2069,6 +2105,8 @@ cc_library_static {
                 "-Dmemset_generic=memset",
             ],
             srcs: [
+                "arch-x86_64/string/memchr.S",
+                "arch-x86_64/string/memrchr.S",
                 "arch-x86_64/string/sse2-memmove-slm.S",
                 "arch-x86_64/string/sse2-memset-slm.S",
                 "arch-x86_64/string/sse2-stpcpy-slm.S",
@@ -2081,6 +2119,8 @@ cc_library_static {
                 "arch-x86_64/string/sse4-memcmp-slm.S",
                 "arch-x86_64/string/ssse3-strcmp-slm.S",
                 "arch-x86_64/string/ssse3-strncmp-slm.S",
+                "arch-x86_64/string/strchr.S",
+                "arch-x86_64/string/strrchr.S",
             ],
         },
     },
