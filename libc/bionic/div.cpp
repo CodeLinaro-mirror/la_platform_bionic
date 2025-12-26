@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 The Android Open Source Project
+ * Copyright (C) 2025 The Android Open Source Project
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,23 +26,29 @@
  * SUCH DAMAGE.
  */
 
-#include <errno.h>
+#include <inttypes.h>
+#include <stdlib.h>
 
-// This function is called from our assembler syscall stubs.
-// C/C++ code should just assign 'errno' instead.
+template <typename ReturnT, typename T>
+ReturnT Div(T n, T d) {
+  return { .quot = n / d, .rem = n % d };
+}
 
-// The return type is 'long' because we use the same routine in calls
-// that return an int as in ones that return a ssize_t. On a 32-bit
-// system these are the same size, but on a 64-bit system they're not.
-// 'long' gives us 32-bit on 32-bit systems, 64-bit on 64-bit systems.
+// These are obsolete since C99 which defined / and % to match,
+// but still around for historical reasons.
 
-// Since __set_errno was mistakenly exposed in <errno.h> in the 32-bit
-// NDK, use a differently named internal function for the system call
-// stubs. This avoids having the stubs .hidden directives accidentally
-// hide __set_errno for old NDK apps.
+div_t div(int n, int d) {
+  return Div<div_t>(n, d);
+}
 
-// This one is for internal use only and used by both LP32 and LP64 assembler.
-extern "C" __LIBC_HIDDEN__ long __set_errno_internal(int n) {
-  errno = n;
-  return -1;
+ldiv_t ldiv(long n, long d) {
+  return Div<ldiv_t>(n, d);
+}
+
+lldiv_t lldiv(long long n, long long d) {
+  return Div<lldiv_t>(n, d);
+}
+
+imaxdiv_t imaxdiv(intmax_t n, intmax_t d) {
+  return Div<imaxdiv_t>(n, d);
 }

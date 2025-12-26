@@ -26,6 +26,7 @@
 #include <sys/cdefs.h>
 
 #include <algorithm>
+#include <limits>
 #include <vector>
 
 #include "buffer_tests.h"
@@ -1111,6 +1112,29 @@ TEST(STRING_TEST, strlen_overread) {
   RunSingleBufferOverreadTest(DoStrlenTest);
 }
 
+static void DoStrnlenTest(uint8_t* buf, size_t len) {
+  if (!len) {
+    return;
+  }
+
+  auto* s = reinterpret_cast<char*>(buf);
+  memset(buf, (32 + (len % 96)), len);
+  ASSERT_EQ(len, strnlen(s, len));
+
+  buf[len - 1] = '\0';
+  ASSERT_EQ(len - 1, strnlen(s, len));
+  ASSERT_EQ(len - 1, strnlen(s, len + 1000));
+  ASSERT_EQ(len - 1, strnlen(s, std::numeric_limits<size_t>::max()));
+}
+
+TEST(STRING_TEST, strnlen_align) {
+  RunSingleBufferAlignTest(LARGE, DoStrnlenTest);
+}
+
+TEST(STRING_TEST, strnlen_overread) {
+  RunSingleBufferOverreadTest(DoStrnlenTest);
+}
+
 static void DoStrcpyTest(uint8_t* src, uint8_t* dst, size_t len) {
   if (len >= 1) {
     memset(src, (32 + (len % 96)), len - 1);
@@ -1669,12 +1693,12 @@ TEST(STRING_TEST, memccpy_smoke) {
 
   memset(dst, 0, sizeof(dst));
   char* p = static_cast<char*>(memccpy(dst, "hello world", ' ', 32));
-  ASSERT_STREQ("hello ", dst);
-  ASSERT_EQ(ptrdiff_t(6), p - dst);
+  EXPECT_STREQ("hello ", dst);
+  EXPECT_EQ(ptrdiff_t(6), p - dst);
 
   memset(dst, 0, sizeof(dst));
-  ASSERT_EQ(nullptr, memccpy(dst, "hello world", ' ', 4));
-  ASSERT_STREQ("hell", dst);
+  EXPECT_EQ(nullptr, memccpy(dst, "hello world", ' ', 4));
+  EXPECT_STREQ("hell", dst);
 }
 
 TEST(STRING_TEST, memset_explicit_smoke) {

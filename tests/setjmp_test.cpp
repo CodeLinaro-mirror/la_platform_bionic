@@ -180,17 +180,13 @@ TEST(setjmp, sigsetjmp_1_signal_mask) {
 
   // arm callee saves: r4-r11, d8-d15
 
+  // In practice, like x86, we've seen clang clobber the integer callee saves and break this test.
+  // Since 32-bit is deprecated (to the extent that we can't run 32-bit code on current devices),
+  // we just test the easy floating point callee saves.
+
   #define SET_REGS() \
     asm volatile( \
-      "mov r4, #4 ; \
-       mov r5, #5 ; \
-       mov r6, #6 ; \
-       mov r7, #7 ; \
-       mov r8, #8 ; \
-       mov r9, #9 ; \
-       mov r10, #10 ; \
-       mov r11, #11 ; \
-       vmov.f64 d8, #8.0 ; \
+      "vmov.f64 d8, #8.0 ; \
        vmov.f64 d9, #9.0 ; \
        vmov.f64 d10, #10.0 ; \
        vmov.f64 d11, #11.0 ; \
@@ -199,19 +195,10 @@ TEST(setjmp, sigsetjmp_1_signal_mask) {
        vmov.f64 d14, #14.0 ; \
        vmov.f64 d15, #15.0 ; \
       " : : : \
-      "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", \
       "d8", "d9", "d10", "d11", "d12", "d13", "d14", "d15")
   #define CLEAR_REGS() \
     asm volatile( \
-      "mov r4, #0 ; \
-       mov r5, #0 ; \
-       mov r6, #0 ; \
-       mov r7, #0 ; \
-       mov r8, #0 ; \
-       mov r9, #0 ; \
-       mov r10, #0 ; \
-       mov r11, #0 ; \
-       vmov.i64 d8, #0 ; \
+      "vmov.i64 d8, #0 ; \
        vmov.i64 d9, #0 ; \
        vmov.i64 d10, #0 ; \
        vmov.i64 d11, #0 ; \
@@ -220,29 +207,12 @@ TEST(setjmp, sigsetjmp_1_signal_mask) {
        vmov.i64 d14, #0 ; \
        vmov.i64 d15, #0 ; \
       " : : : \
-      "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", \
       "d8", "d9", "d10", "d11", "d12", "d13", "d14", "d15")
-
   // clang inline assembler doesn't seem to allow any reasonable way of
   // storing the fp registers directly into the array, but they're unlikely
   // to be corrupted anyway.
   #define GET_FREG(n) ({ double _r; asm volatile("fcpyd %P0, d"#n : "=w"(_r) : :); _r;})
   #define CHECK_REGS() \
-    asm volatile( \
-      "str r4,  %0, #4 ; \
-       str r5,  %0, #4 ; \
-       str r6,  %0, #4 ; \
-       str r7,  %0, #4 ; \
-       str r8,  %0, #4 ; \
-       str r9,  %0, #4 ; \
-       str r10, %0, #4 ; \
-       str r11, %0, #4 ; \
-      " : "=&m"(regs), "=m"(fregs) : : \
-      "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11"); \
-    EXPECT_EQ(4, regs[4]); EXPECT_EQ(5, regs[5]); \
-    EXPECT_EQ(6, regs[6]); EXPECT_EQ(7, regs[7]); \
-    EXPECT_EQ(8, regs[8]); EXPECT_EQ(9, regs[9]); \
-    EXPECT_EQ(10, regs[10]); EXPECT_EQ(11, regs[11]); \
     EXPECT_EQ(8.0,  GET_FREG(8));  EXPECT_EQ(9.0,  GET_FREG(9)); \
     EXPECT_EQ(10.0, GET_FREG(10)); EXPECT_EQ(11.0, GET_FREG(11)); \
     EXPECT_EQ(12.0, GET_FREG(12)); EXPECT_EQ(13.0, GET_FREG(13)); \
@@ -506,45 +476,66 @@ TEST(setjmp, setjmp_registers) {
 
 #if defined(__arm__)
 #define JB_SIGFLAG_OFFSET 0
+#define JB_CHECKSUM_OFFSET 31
 #elif defined(__aarch64__)
 #define JB_SIGFLAG_OFFSET 0
+#define JB_CHECKSUM_OFFSET 24
 #elif defined(__i386__)
 #define JB_SIGFLAG_OFFSET 8
+#define JB_CHECKSUM_OFFSET 9
 #elif defined(__riscv)
 #define JB_SIGFLAG_OFFSET 0
+#define JB_CHECKSUM_OFFSET 29
 #elif defined(__x86_64)
 #define JB_SIGFLAG_OFFSET 8
+#define JB_CHECKSUM_OFFSET 10
 #endif
 
 TEST_F(setjmp_DeathTest, setjmp_cookie) {
+#if defined(__BIONIC__)
   jmp_buf jb;
   int value = setjmp(jb);
   ASSERT_EQ(0, value);
 
-  long* sigflag = reinterpret_cast<long*>(jb) + JB_SIGFLAG_OFFSET;
+#if defined(__i386__) || defined(__x86_64__)
+  long* raw_words = reinterpret_cast<long*>(jb);
+  size_t word_count = sizeof(jmp_buf) / sizeof(long);
 
-  // Make sure there's actually a cookie.
-  EXPECT_NE(0, *sigflag & ~1);
+  // Corrupt the cookie.
+  raw_words[JB_SIGFLAG_OFFSET] = 0xfeedface;
+  // Recompute the checksum.
+  // This assumes that the checksum is the last word,
+  // which is true for all our architectures.
+  long cs = 0;
+  for (size_t i = 0; i < word_count - 1; i++) {
+    cs ^= raw_words[i];
+  }
+  raw_words[JB_CHECKSUM_OFFSET] = cs;
 
-  // Wipe it out
-  *sigflag &= 1;
-  // TODO: we can't make this EXPECT_EXIT() because all the implementations are wrong!
+  EXPECT_EXIT(longjmp(jb, 0), testing::KilledBySignal(SIGABRT), "setjmp cookie mismatch");
+#else
+  // TODO: we can't make this EXPECT_EXIT() because the implementations are wrong!
   // TODO: we need to fix longjmp() to check the cookie _before_ corrupting sp + pc!
   EXPECT_DEATH(longjmp(jb, 0), "");
+#endif
+#else
+  GTEST_SKIP() << "bionic-only test";
+#endif
 }
 
-TEST_F(setjmp_DeathTest, setjmp_cookie_checksum) {
+TEST_F(setjmp_DeathTest, setjmp_checksum) {
+#if defined(__BIONIC__)
   jmp_buf jb;
   int value = setjmp(jb);
+  ASSERT_EQ(0, value);
 
-  if (value == 0) {
-    // Flip a bit.
-    reinterpret_cast<long*>(jb)[1] ^= 1;
+  // Flip a bit.
+  reinterpret_cast<long*>(jb)[1] ^= 1;
 
-    EXPECT_EXIT(longjmp(jb, 1), testing::KilledBySignal(SIGABRT), "checksum mismatch");
-  } else {
-    fprintf(stderr, "setjmp_cookie_checksum: longjmp succeeded?");
-  }
+  EXPECT_EXIT(longjmp(jb, 1), testing::KilledBySignal(SIGABRT), "setjmp checksum mismatch");
+#else
+  GTEST_SKIP() << "bionic-only test";
+#endif
 }
 
 __attribute__((noinline)) void call_longjmp(jmp_buf buf) {
