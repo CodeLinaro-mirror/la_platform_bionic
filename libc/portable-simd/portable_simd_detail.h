@@ -34,7 +34,14 @@
 
 #include <async_safe/CHECK.h>
 
-// TODO(b/452714218): 'Portable' really should mean more than 'AVX2 and SSE'.
+// Clang's HWASAN implementation adds additional runtime checks for catching
+// even single-byte overruns. If we can't safely overread by even a single byte,
+// psimd is pointless, so require no hwasan. This isn't a concern with
+// handwritten assembly (e.g., from arm-optimized-routines) because the assembler
+// won't add bounds-check instructions, only the compiler.
+#if __has_feature(hwaddress_sanitizer)
+#error "hwasan is too strict for psimd; please disable it."
+#endif
 
 // Users are expected to `#define` the level of vectorization they want to emit
 // a declaration for (e.g., AVX2, SSE).
@@ -54,8 +61,18 @@
 // SSE4.
 #define HWY_DISABLE_PCLMUL_AES 1
 #define HWY_BASELINE_TARGETS HWY_SSE4
+#elif PSIMD_TARGET_NEON
+// Note that AES isn't guaranteed in the baseline ARM64 ABI (practically,
+// `aarch64-linux-android10000` builds will break if `HWY_NEON` is used).
+// It shouldn't matter for things like `wcslen`, anyway.
+#define HWY_BASELINE_TARGETS HWY_NEON_WITHOUT_AES
+#ifdef PSIMD_MTE_ENABLED
+#define PSIMD_EXPORT_SUFFIX _neon_mte
 #else
-#error "unknown PSIMD_TARGET - want SSE or AVX2"
+#define PSIMD_EXPORT_SUFFIX _neon
+#endif
+#else
+#error "unknown PSIMD_TARGET - want SSE, NEON, or AVX2"
 #endif
 
 // Highway config.
@@ -89,14 +106,23 @@ namespace hn = hwy::HWY_NAMESPACE;
 // should be put on `PSIMD_LIBC_FUNCTION`.
 #define PSIMD_FLATTEN __attribute__((__flatten__))
 
+// Given e.g., `strlen`, gives back the portable_simd name for the current
+// compilation, e.g., `portable_simd_strlen_avx2`.
+#define PSIMD_CONCAT1(x, y) x##y
+#define PSIMD_CONCAT(x, y) PSIMD_CONCAT1(x, y)
+#define PSIMD_LIBC_FUNCTION_NAME(libc_name) \
+  PSIMD_CONCAT(PSIMD_CONCAT(portable_simd_, libc_name), PSIMD_EXPORT_SUFFIX)
+
 // If PSIMD_ADD_LIBC_ALIASES is defined, we'll emit strong aliases for each
 // function to its corresponding libc function. For example, if this TU defines
 // a portable-simd version of `strlen` for SSE, `-DPSIMD_ADD_LIBC_ALIASES` will
 // emit a definition of `strlen` as well as `portable_simd_strlen_sse`.
 #if defined(PSIMD_ADD_LIBC_ALIASES)
-#define PSIMD_MAYBE_STRONG_ALIAS(libc_name, impl_func) __strong_alias(libc_name, impl_func)
+#define PSIMD_MAYBE_STRONG_ALIAS1(libc_name, impl_name) __strong_alias(libc_name, impl_name)
+#define PSIMD_MAYBE_STRONG_ALIAS(libc_name) \
+  PSIMD_MAYBE_STRONG_ALIAS1(libc_name, PSIMD_LIBC_FUNCTION_NAME(libc_name))
 #else
-#define PSIMD_MAYBE_STRONG_ALIAS(libc_name, impl_func)
+#define PSIMD_MAYBE_STRONG_ALIAS(libc_name)
 #endif
 
 // Attributes to place on functions that we 'export', AKA are designed to be
@@ -112,15 +138,10 @@ namespace hn = hwy::HWY_NAMESPACE;
 // `avx2` depends on the SIMD instructions we're targeting). If
 // `PSIMD_ADD_LIBC_ALIASES` is enabled, it also adds a strong alias for
 // `strlen = portable_simd_strlen_avx2`.
-#define PSIMD_CONCAT1(x, y) x##y
-#define PSIMD_CONCAT(x, y) PSIMD_CONCAT1(x, y)
 #define PSIMD_LIBC_FUNCTION_IMPL(ret_ty, libc_name, full_name, ...) \
-  PSIMD_MAYBE_STRONG_ALIAS(libc_name, full_name)                    \
   PSIMD_FLATTEN __attribute__((__hot__)) ret_ty full_name(__VA_ARGS__)
 #define PSIMD_LIBC_FUNCTION(ret_ty, libc_name, ...) \
-  PSIMD_LIBC_FUNCTION_IMPL(                         \
-      ret_ty, libc_name,                            \
-      PSIMD_CONCAT(PSIMD_CONCAT(portable_simd_, libc_name), PSIMD_EXPORT_SUFFIX), __VA_ARGS__)
+  PSIMD_LIBC_FUNCTION_IMPL(ret_ty, libc_name, PSIMD_LIBC_FUNCTION_NAME(libc_name), __VA_ARGS__)
 
 namespace portable_simd {
 
@@ -173,8 +194,6 @@ struct optional {
 
   optional(const optional&) = default;
   optional(optional&&) = default;
-  optional& operator=(const optional&) = default;
-  optional& operator=(optional&&) = default;
 
   const T& operator*() const {
     PSIMD_DCHECK(has_value());
@@ -209,8 +228,21 @@ template <typename T, typename... Ts>
 using invoke_result_t = decltype(declval<T>()(declval<Ts>()...));
 }  // namespace
 
+// Set to false on builds with strict memory operation tagging, e.g., MTE.
+constexpr static bool kReadAheadToPageBoundaryIsOK =
+#if defined(PSIMD_MTE_ENABLED)
+    false
+#else
+    true
+#endif
+    ;
+
 template <typename VectorTag>
 PSIMD_FLATTEN bool can_safely_unaligned_read(const void* ptr) {
+  if (!kReadAheadToPageBoundaryIsOK) {
+    return false;
+  }
+
   constexpr VectorTag d;
   constexpr size_t max_offset_for_safe_read = kPageSize - d.MaxBytes();
   const uintptr_t offset_in_page = reinterpret_cast<uintptr_t>(ptr) & (kPageSize - 1);
@@ -256,13 +288,13 @@ PSIMD_FLATTEN inline GenericAlignResult<VectorTag, T> align_forward_to_vec_known
   constexpr VectorTag d;
   const auto loaded = LoadU(d, reinterpret_cast<const VectorElem*>(s));
   auto aligned_ptr = reinterpret_cast<uintptr_t>(s);
-  const auto overlap_bytes = aligned_ptr & static_cast<uintptr_t>(d.MaxLanes() - 1);
+  const auto overlap_bytes = aligned_ptr & static_cast<uintptr_t>(d.MaxBytes() - 1);
   if (const T x = f(loaded, /*skip_bytes=*/optional<size_t>{}, optional<size_t>{overlap_bytes})) {
     return {nullptr, x};
   }
 
   aligned_ptr -= overlap_bytes;
-  aligned_ptr += d.MaxLanes();
+  aligned_ptr += d.MaxBytes();
   const auto* ptr = reinterpret_cast<const VectorElem*>(aligned_ptr);
   PSIMD_DCHECK(hn::IsAligned(d, ptr));
   return {ptr, {}};

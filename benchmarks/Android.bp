@@ -15,7 +15,6 @@
 //
 
 package {
-    default_team: "trendy_team_native_tools_libraries",
     default_applicable_licenses: ["bionic_benchmarks_license"],
 }
 
@@ -61,6 +60,7 @@ cc_defaults {
         "syscall_mm_benchmark.cpp",
         "time_benchmark.cpp",
         "unistd_benchmark.cpp",
+        "wchar_benchmark.cpp",
         "wctype_benchmark.cpp",
     ],
     shared_libs: ["liblog"],

@@ -94,17 +94,17 @@ ENTRY_WEAK_FOR_NATIVE_BRIDGE(sigsetjmp)
 
   // Do we need to save the signal mask?
   testq $1,%rax
-  jz 1f
+  jz L(save_registers)
 
   // Save current signal mask.
   pushq %rdi // Push 'env'.
   // The 'how' argument is ignored if new_mask is NULL.
-  xorq %rsi,%rsi // NULL.
+  xorl %esi,%esi // NULL.
   leaq (_JB_SIGMASK * 8)(%rdi),%rdx // old_mask.
   call sigprocmask
   popq %rdi // Pop 'env'.
 
-1:
+L(save_registers):
   // Fetch the setjmp cookie and clear the signal flag bit.
   popq %rax
   andq $-2,%rax
@@ -152,15 +152,15 @@ ENTRY_WEAK_FOR_NATIVE_BRIDGE(siglongjmp)
   movq (_JB_SIGFLAG * 8)(%rdi), %rdi
   pushq %rdi // Push cookie
   testq $1, %rdi
-  jz 1f
+  jz L(load_registers)
 
   // Restore the signal mask.
   movq $2,%rdi // SIG_SETMASK.
   leaq (_JB_SIGMASK * 8)(%r12),%rsi // new_mask.
-  xorq %rdx,%rdx // NULL.
+  xorl %edx,%edx // NULL.
   call sigprocmask
 
-1:
+L(load_registers):
   // Fetch the setjmp cookie and clear the signal flag bit.
   popq %rcx
   andq $-2, %rcx
