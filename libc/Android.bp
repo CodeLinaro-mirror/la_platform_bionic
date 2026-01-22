@@ -1715,8 +1715,6 @@ cc_library {
     defaults: [
         "libc_ndk_defaults",
     ],
-    // TODO(b/463733379)
-    xom: false,
 }
 
 cc_library_static {
