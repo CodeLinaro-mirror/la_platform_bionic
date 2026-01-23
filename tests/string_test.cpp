@@ -26,6 +26,7 @@
 #include <sys/cdefs.h>
 
 #include <algorithm>
+#include <limits>
 #include <vector>
 
 #include "buffer_tests.h"
@@ -1111,6 +1112,29 @@ TEST(STRING_TEST, strlen_overread) {
   RunSingleBufferOverreadTest(DoStrlenTest);
 }
 
+static void DoStrnlenTest(uint8_t* buf, size_t len) {
+  if (!len) {
+    return;
+  }
+
+  auto* s = reinterpret_cast<char*>(buf);
+  memset(buf, (32 + (len % 96)), len);
+  ASSERT_EQ(len, strnlen(s, len));
+
+  buf[len - 1] = '\0';
+  ASSERT_EQ(len - 1, strnlen(s, len));
+  ASSERT_EQ(len - 1, strnlen(s, len + 1000));
+  ASSERT_EQ(len - 1, strnlen(s, std::numeric_limits<size_t>::max()));
+}
+
+TEST(STRING_TEST, strnlen_align) {
+  RunSingleBufferAlignTest(LARGE, DoStrnlenTest);
+}
+
+TEST(STRING_TEST, strnlen_overread) {
+  RunSingleBufferOverreadTest(DoStrnlenTest);
+}
+
 static void DoStrcpyTest(uint8_t* src, uint8_t* dst, size_t len) {
   if (len >= 1) {
     memset(src, (32 + (len % 96)), len - 1);
@@ -1393,10 +1417,15 @@ static void DoMemchrTest(uint8_t* buf, size_t len) {
       ASSERT_EQ(&buf[0], memchr(buf, search_value, len));
 
       buf[0] = value;
-      buf[len - 1] = search_value;
-      // The search value is the last element in the buffer.
-      ASSERT_EQ(&buf[len - 1], memchr(buf, search_value, len));
     }
+
+    // The search value is the last element in the buffer.
+    buf[len - 1] = search_value;
+    ASSERT_EQ(&buf[len - 1], memchr(buf, search_value, len));
+
+    // The search value is the last element in the buffer, and the length
+    // spans well beyond the buffer's end. C11 explicitly allows this.
+    ASSERT_EQ(&buf[len - 1], memchr(buf, search_value, len + 4096));
   }
 }
 

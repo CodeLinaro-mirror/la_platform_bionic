@@ -223,6 +223,7 @@ int _fwalk(int (*callback)(FILE*)) {
   for (glue* g = &__sglue; g != nullptr; g = g->next) {
     FILE* fp = g->iobs;
     for (int n = g->niobs; --n >= 0; ++fp) {
+      ScopedFileLock sfl(fp);
       if (fp->_flags != 0) {
         result |= (*callback)(fp);
       }
@@ -661,11 +662,6 @@ int __sflush(FILE* fp) {
     n -= written, p += written;
   }
   return 0;
-}
-
-int __sflush_locked(FILE* fp) {
-  ScopedFileLock sfl(fp);
-  return __sflush(fp);
 }
 
 int __sread(void* cookie, char* buf, int n) {
@@ -1387,7 +1383,7 @@ int wscanf(const wchar_t* fmt, ...) {
 }
 
 static int fflush_all() {
-  return _fwalk(__sflush_locked);
+  return _fwalk(__sflush);
 }
 
 int fflush(FILE* fp) {
