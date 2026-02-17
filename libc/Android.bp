@@ -503,10 +503,8 @@ cc_library_static {
         "upstream-openbsd/lib/libc/stdio/vswprintf.c",
         "upstream-openbsd/lib/libc/stdio/wbuf.c",
         "upstream-openbsd/lib/libc/stdio/wsetup.c",
-        "upstream-openbsd/lib/libc/stdlib/getenv.c",
         "upstream-openbsd/lib/libc/stdlib/getsubopt.c",
         "upstream-openbsd/lib/libc/stdlib/recallocarray.c",
-        "upstream-openbsd/lib/libc/stdlib/setenv.c",
         "upstream-openbsd/lib/libc/stdlib/tfind.c",
         "upstream-openbsd/lib/libc/stdlib/tsearch.c",
         "upstream-openbsd/lib/libc/string/strcasestr.c",
@@ -750,6 +748,7 @@ cc_defaults {
             srcs: [
                 "portable-simd/memchr.cpp",
                 "portable-simd/strlen.cpp",
+                "portable-simd/strspn.cpp",
             ],
         },
     },
@@ -836,6 +835,13 @@ cc_defaults {
 cc_library_static {
     name: "libc_bionic_portable_simd_arm64_neon_no_mte",
     defaults: ["libc_bionic_portable_simd_arm64_neon_defaults"],
+    arch: {
+        arm64: {
+            srcs: [
+                "portable-simd/strspn.cpp",
+            ],
+        },
+    },
 }
 
 cc_library_static {
@@ -846,6 +852,9 @@ cc_library_static {
             cflags: [
                 "-DPSIMD_MTE_ENABLED=1",
             ],
+            // N.B., strspn's regular implementation is MTE-compatible, so it
+            // exports strspn/strcspn symbols directly. No need to include
+            // here.
         },
     },
 }
@@ -906,7 +915,6 @@ cc_library_static {
         "bionic/casecmp.cpp",
         "bionic/chmod.cpp",
         "bionic/chown.cpp",
-        "bionic/clearenv.cpp",
         "bionic/clock.cpp",
         "bionic/clock_getcpuclockid.cpp",
         "bionic/clock_nanosleep.cpp",
@@ -916,6 +924,7 @@ cc_library_static {
         "bionic/div.cpp",
         "bionic/dup.cpp",
         "bionic/endian.cpp",
+        "bionic/env.cpp",
         "bionic/environ.cpp",
         "bionic/err.cpp",
         "bionic/error.cpp",
@@ -1708,7 +1717,6 @@ cc_defaults {
         export_llndk_headers: ["libc_headers"],
     },
     afdo: true,
-
 }
 
 cc_library {
@@ -1852,6 +1860,7 @@ cc_library_headers {
     llndk: {
         llndk_headers: true,
     },
+    lfi_supported: true,
     host_supported: true,
     vendor_available: true,
     product_available: true,
@@ -1918,6 +1927,7 @@ cc_library_headers {
     ramdisk_available: true,
     vendor_ramdisk_available: true,
     recovery_available: true,
+    lfi_supported: true,
     sdk_version: "1",
 
     apex_available: [
@@ -2288,6 +2298,54 @@ cc_library_static {
 }
 
 // ========================================================
+// libc dependencies for LFI projects
+// ========================================================
+
+cc_library_static {
+    name: "libc_lfi",
+    header_libs: ["libc_headers"],
+    export_header_lib_headers: [
+        "libc_headers",
+    ],
+    include_dirs: [
+        "bionic/libc/platform",
+    ],
+    cflags: [
+        "-Wall",
+        "-Werror",
+    ],
+    whole_static_libs: [
+        "libarm-optimized-routines-mem",
+    ],
+    system_shared_libs: [],
+    nocrt: true,
+    stl: "none",
+    lfi_supported: true,
+    arch: {
+        arm: {
+            enabled: false,
+        },
+        arm64: {
+            enabled: true,
+        },
+        x86: {
+            enabled: false,
+        },
+        x86_64: {
+            enabled: false,
+        },
+    },
+    min_sdk_version: "apex_inherit",
+    apex_available: [
+        "com.android.media.swcodec",
+    ],
+    visibility: [
+        "//external/libopus:__subpackages__",
+        "//system/lfi:__subpackages__",
+    ],
+}
+
+// ========================================================
 // NDK headers.
 // ========================================================
 
@@ -2390,12 +2448,18 @@ ndk_library {
     name: "libc",
     symbol_file: "libc.map.txt",
     first_version: "9",
+    // This runtime library does not depend on ART at all, so it simply gets an
+    // empty denylist.
+    bypass_artless_denylist: true,
 }
 
 ndk_library {
     name: "libstdc++",
     symbol_file: "libstdc++.map.txt",
     first_version: "9",
+    // This runtime library does not depend on ART at all, so it simply gets an
+    // empty denylist.
+    bypass_artless_denylist: true,
 }
 
 // Export these headers for toolbox to process

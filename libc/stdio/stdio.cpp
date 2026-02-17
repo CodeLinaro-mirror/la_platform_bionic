@@ -674,11 +674,6 @@ int __swrite(void* cookie, const char* buf, int n) {
   return TEMP_FAILURE_RETRY(write(fp->_file, buf, n));
 }
 
-fpos_t __sseek(void* cookie, fpos_t offset, int whence) {
-  FILE* fp = reinterpret_cast<FILE*>(cookie);
-  return TEMP_FAILURE_RETRY(lseek(fp->_file, offset, whence));
-}
-
 off64_t __sseek64(void* cookie, off64_t offset, int whence) {
   FILE* fp = reinterpret_cast<FILE*>(cookie);
   return TEMP_FAILURE_RETRY(lseek64(fp->_file, offset, whence));
@@ -939,14 +934,13 @@ char* fgets_unlocked(char* buf, int n, FILE* fp) {
         break;
       }
     }
+
+    // Scan through at most n bytes of the current buffer, looking for '\n'.
     size_t len = fp->_r;
     unsigned char* p = fp->_p;
-
-    // Scan through at most n bytes of the current buffer,
-    // looking for '\n'.  If found, copy up to and including
-    // newline, and stop.  Otherwise, copy entire chunk and loop.
     if (len > static_cast<size_t>(n)) len = n;
     unsigned char* t = static_cast<unsigned char*>(memchr(p, '\n', len));
+    // If found, copy up to and including newline and stop.
     if (t != nullptr) {
       len = ++t - p;
       fp->_r -= len;
@@ -955,6 +949,7 @@ char* fgets_unlocked(char* buf, int n, FILE* fp) {
       s[len] = '\0';
       return buf;
     }
+    // Otherwise, copy entire chunk and loop.
     fp->_r -= len;
     fp->_p += len;
     memcpy(s, p, len);
@@ -1389,15 +1384,11 @@ static int fflush_all() {
 int fflush(FILE* fp) {
   if (fp == nullptr) return fflush_all();
   ScopedFileLock sfl(fp);
-  return fflush_unlocked(fp);
+  return __sflush(fp);
 }
 
 int fflush_unlocked(FILE* fp) {
   if (fp == nullptr) return fflush_all();
-  if ((fp->_flags & (__SWR | __SRW)) == 0) {
-    errno = EBADF;
-    return EOF;
-  }
   return __sflush(fp);
 }
 
