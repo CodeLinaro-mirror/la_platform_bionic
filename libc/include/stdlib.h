@@ -67,11 +67,12 @@ void quick_exit(int __status) __noreturn;
  * Returns a pointer to the value on success and returns a null
  * pointer on failure.
  *
- * This function is not thread safe.
- *
- * Calls to getenv() -- including those made by the implementation itself,
- * such as <time.h> functions checking $TZ -- may crash if made while the
- * environment is being modified.
+ * This function is not thread safe until API level 38.
+ * Before then, calls to getenv() may crash if made while a call to
+ * clearenv()/putenv()/setenv() is modifying the environment.
+ * Note that even if your code doesn't call getenv() directly,
+ * the operating system might: <time.h> functions check $TZ, for example,
+ * and various <stdlib.h> and <stdio.h> functions check $TMPDIR.
  */
 char* _Nullable getenv(const char* _Nonnull __name);
 
@@ -81,11 +82,11 @@ char* _Nullable getenv(const char* _Nonnull __name);
  *
  * Returns 0 on success and returns non-zero and sets `errno` on failure.
  *
- * This function is not thread safe.
- *
- * Calls to getenv() -- including those made by the implementation itself,
- * such as <time.h> functions checking $TZ -- may crash if made while
- * putenv() is modifying the environment.
+ * This function is not thread safe until API level 38.
+ * Before then, calls to getenv() may crash if made while this function is modifying the environment.
+ * Note that even if your code doesn't call getenv() directly,
+ * the operating system might: <time.h> functions check $TZ, for example,
+ * and various <stdlib.h> and <stdio.h> functions check $TMPDIR.
  *
  * The given pointer is added directly to the environment,
  * so the caller must ensure it is neither freed nor modified.
@@ -111,11 +112,11 @@ int putenv(char* _Nonnull __assignment);
  * (If the environment variable already exists and `overwrite` is 0,
  * the environment is left unchanged and this is considered success.)
  *
- * This function is not thread safe.
- *
- * Calls to getenv() -- including those made by the implementation itself,
- * such as <time.h> functions checking $TZ -- may crash if made while
- * setenv() is modifying the environment.
+ * This function is not thread safe until API level 38.
+ * Before then, calls to getenv() may crash if made while this function is modifying the environment.
+ * Note that even if your code doesn't call getenv() directly,
+ * the operating system might: <time.h> functions check $TZ, for example,
+ * and various <stdlib.h> and <stdio.h> functions check $TMPDIR.
  *
  * This function leaks memory (by allocating a new "name=value" string),
  * but this does mean that the caller's pointers only need be valid and
@@ -132,11 +133,11 @@ int setenv(const char* _Nonnull __name, const char* _Nonnull __value, int __over
  *
  * Returns 0 on success and returns non-zero and sets `errno` on failure.
  *
- * This function is not thread safe.
- *
- * Calls to getenv() -- including those made by the implementation itself,
- * such as <time.h> functions checking $TZ -- may crash if made while
- * unsetenv() is modifying the environment.
+ * This function is not thread safe until API level 38.
+ * Before then, calls to getenv() may crash if made while this function is modifying the environment.
+ * Note that even if your code doesn't call getenv() directly,
+ * the operating system might: <time.h> functions check $TZ, for example,
+ * and various <stdlib.h> and <stdio.h> functions check $TMPDIR.
  *
  * This function leaks memory rather than free anything so that pointers
  * already handed out by getenv() are not invalidated.
@@ -149,11 +150,11 @@ int unsetenv(const char* _Nonnull __name);
  *
  * Returns 0 on success and returns non-zero and sets `errno` on failure.
  *
- * This function is not thread safe.
- *
- * Calls to getenv() -- including those made by the implementation itself,
- * such as <time.h> functions checking $TZ -- may crash if made while
- * clearenv() is modifying the environment.
+ * This function is not thread safe until API level 38.
+ * Before then, calls to getenv() may crash if made while this function is modifying the environment.
+ * Note that even if your code doesn't call getenv() directly,
+ * the operating system might: <time.h> functions check $TZ, for example,
+ * and various <stdlib.h> and <stdio.h> functions check $TMPDIR.
  *
  * This function leaks memory rather than free anything so that pointers
  * already handed out by getenv() are not invalidated.
