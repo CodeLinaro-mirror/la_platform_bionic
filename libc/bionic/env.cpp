@@ -32,9 +32,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "private/ScopedRWLock.h"
-
-static pthread_rwlock_t g_environ_lock = PTHREAD_RWLOCK_INITIALIZER;
+static char** lastenv;        /* last value of environ */
 
 // Returns a pointer to the value associated with name,
 // or nullptr if not found.
@@ -61,48 +59,17 @@ char* getenv(const char* name) {
     return nullptr;
   }
 
-  ScopedReadLock locker(&g_environ_lock);
   size_t offset = 0;
   return __findenv(name, name_length, &offset);
 }
 
-static bool __add_new_environ_slot(size_t* offset) {
-  size_t old_size = 0;
+static size_t __current_env_size() {
+  size_t result = 0;
   if (environ != nullptr) {
     char** p = environ;
-    for (; *p != nullptr; ++p) ++old_size;
+    for (; *p != nullptr; ++p) ++result;
   }
-
-  // Keep track of the most recent environ allocation we did.
-  // We can't just pass environ to reallocarray() because that might
-  // have been replaced with non-heap-allocated memory. Supporting that
-  // is probably a mistake, but it's our (and everyone else's) historical
-  // behavior.
-  static char** old_env = nullptr;
-
-  char** new_env = static_cast<char**>(reallocarray(old_env, old_size + 2, sizeof(char*)));
-  if (!new_env) return false;
-  if (old_env != environ && environ != nullptr) {
-    memcpy(new_env, environ, old_size * sizeof(char*));
-  }
-  environ = old_env = new_env;
-  environ[old_size] = environ[old_size + 1] = nullptr;
-  *offset = old_size;
-  return true;
-}
-
-template <typename F>
-static int __update_environ(const char* name, size_t name_length, bool overwrite, F string_maker) {
-  size_t offset = 0;
-  if (__findenv(name, name_length, &offset) != nullptr) {
-    if (!overwrite) return 0;
-  } else {
-    if (!__add_new_environ_slot(&offset)) return -1;
-  }
-
-  char* str = string_maker();
-  environ[offset] = str;
-  return str ? 0 : -1;
+  return result;
 }
 
 int putenv(char* str) {
@@ -116,11 +83,28 @@ int putenv(char* str) {
     return -1;
   }
 
-  ScopedWriteLock locker(&g_environ_lock);
-  return __update_environ(str, name_length, true, [str]() { return str; });
+  size_t offset = 0;
+  if (__findenv(str, name_length, &offset) != nullptr) {
+    environ[offset++] = str;
+    return 0;
+  }
+
+  /* create new slot for string */
+  size_t cnt = __current_env_size();
+  char** p = static_cast<char**>(reallocarray(lastenv, cnt + 2, sizeof(char*)));
+  if (!p) {
+    return -1;
+  }
+  if (lastenv != environ && environ != nullptr) {
+    memcpy(p, environ, cnt * sizeof(char*));
+  }
+  lastenv = environ = p;
+  environ[cnt] = str;
+  environ[cnt + 1] = nullptr;
+  return 0;
 }
 
-int setenv(const char* name, const char* value, int overwrite) {
+int setenv(const char* name, const char* value, int rewrite) {
   size_t name_length;
   if (name == nullptr ||
       (name_length = strchrnul(name, '=') - name) == 0 ||
@@ -129,17 +113,31 @@ int setenv(const char* name, const char* value, int overwrite) {
     return -1;
   }
 
-  ScopedWriteLock locker(&g_environ_lock);
-  auto string_maker = [name, name_length, value]() {
-    // Turn "name" and "value" into "name=value" for insertion into environ.
-    size_t value_length = strlen(value);
-    char* str = static_cast<char*>(malloc(name_length + 1 + value_length + 1));
-    if (str != nullptr) {
-      mempcpy(mempcpy(mempcpy(str, name, name_length), "=", 1), value, value_length + 1);
+  size_t offset = 0;
+  if (__findenv(name, name_length, &offset) != nullptr) {
+    if (!rewrite) return 0;
+  } else {          /* create new slot */
+    size_t cnt = __current_env_size();
+    char** p = static_cast<char**>(reallocarray(lastenv, cnt + 2, sizeof(char*)));
+    if (!p) {
+      return -1;
     }
-    return str;
-  };
-  return __update_environ(name, name_length, overwrite, string_maker);
+    if (lastenv != environ && environ != nullptr) {
+      memcpy(p, environ, cnt * sizeof(char*));
+    }
+    lastenv = environ = p;
+    offset = cnt;
+    environ[cnt + 1] = nullptr;
+  }
+
+  // Turn "name" and "value" into "name=value" for insertion into environ.
+  size_t value_length = strlen(value);
+  char* str = static_cast<char*>(malloc(name_length + 1 + value_length + 1));
+  if (str == nullptr) return -1;
+  mempcpy(mempcpy(mempcpy(str, name, name_length), "=", 1), value, value_length + 1);
+
+  environ[offset] = str;
+  return 0;
 }
 
 int unsetenv(const char* name) {
@@ -158,7 +156,6 @@ int unsetenv(const char* name) {
   // POSIX says "If more than one string in an environment of a process has the same name,
   // the consequences are undefined" so this isn't _required_ to be a loop,
   // but it matches what other implementations do.
-  ScopedWriteLock locker(&g_environ_lock);
   size_t offset = 0;
   while (__findenv(name, name_length, &offset)) {
     for (char** p = &environ[offset];; ++p) {
@@ -173,7 +170,6 @@ int unsetenv(const char* name) {
 int clearenv() {
   // TODO: this should also set environ itself to null
   // TODO: add missing test
-  ScopedWriteLock locker(&g_environ_lock);
   char** e = environ;
   if (e != nullptr) {
     for (; *e; ++e) {

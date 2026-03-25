@@ -611,20 +611,28 @@ TEST(setjmp, bug_152210274) {
 }
 
 #if defined(__aarch64__)
-// Call sigsetjmp and verify SME ZA state
-static void sigsetjmp_helper() {
+TEST(setjmp, sigsetjmp_sme) {
+  if (!sme_is_enabled()) {
+    GTEST_SKIP() << "SME is not enabled on device.";
+  }
+
   sigjmp_buf jb;
+  sme_enable_za();
   sigsetjmp(jb, 0);
   bool za_state = sme_is_za_on();
   sme_disable_za();  // Turn ZA off anyway.
   ASSERT_FALSE(za_state);
 }
 
-// Call siglongjmp and verify SME ZA state
-static void siglongjmp_helper() {
+TEST(setjmp, siglongjmp_sme) {
+  if (!sme_is_enabled()) {
+    GTEST_SKIP() << "SME is not enabled on device.";
+  }
+
   int value;
   sigjmp_buf jb;
   if ((value = sigsetjmp(jb, 0)) == 0) {
+    sme_enable_za();
     siglongjmp(jb, 789);
     sme_disable_za();
     FAIL();  // Unreachable.
@@ -634,21 +642,5 @@ static void siglongjmp_helper() {
     ASSERT_EQ(789, value);
     ASSERT_FALSE(za_state);
   }
-}
-
-TEST(setjmp, sigsetjmp_sme) {
-  if (!sme_is_enabled()) {
-    GTEST_SKIP() << "SME is not enabled on device.";
-  }
-  __arm_za_disable();
-  sme_dormant_caller(&sigsetjmp_helper);
-}
-
-TEST(setjmp, siglongjmp_sme) {
-  if (!sme_is_enabled()) {
-    GTEST_SKIP() << "SME is not enabled on device.";
-  }
-  __arm_za_disable();
-  sme_dormant_caller(&siglongjmp_helper);
 }
 #endif
