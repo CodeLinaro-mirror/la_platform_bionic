@@ -67,12 +67,11 @@ void quick_exit(int __status) __noreturn;
  * Returns a pointer to the value on success and returns a null
  * pointer on failure.
  *
- * This function is not thread safe:
- * 1. Calls to getenv() -- including those made by the implementation itself,
- *    such as <time.h> functions checking $TZ -- may crash if made while the
- *    environment is being modified.
- * 2. Pointers returned by getenv() may be invalidated by calls to
- *    putenv()/setenv()/unsetenv()/clearenv().
+ * This function is not thread safe.
+ *
+ * Calls to getenv() -- including those made by the implementation itself,
+ * such as <time.h> functions checking $TZ -- may crash if made while the
+ * environment is being modified.
  */
 char* _Nullable getenv(const char* _Nonnull __name);
 
@@ -82,13 +81,25 @@ char* _Nullable getenv(const char* _Nonnull __name);
  *
  * Returns 0 on success and returns non-zero and sets `errno` on failure.
  *
- * This function is not thread safe:
- * 1. Calls to getenv() -- including those made by the implementation itself,
- *    such as <time.h> functions checking $TZ -- may crash if made while the
- *    environment is being modified.
- * 2. Pointers returned by getenv() may be invalidated by calls to putenv().
- * 3. The given pointer is added directly to the environment,
- *    so the caller must ensure it is neither freed nor modified.
+ * This function is not thread safe.
+ *
+ * Calls to getenv() -- including those made by the implementation itself,
+ * such as <time.h> functions checking $TZ -- may crash if made while
+ * putenv() is modifying the environment.
+ *
+ * The given pointer is added directly to the environment,
+ * so the caller must ensure it is neither freed nor modified.
+ *
+ * To ensure that any value returned by getenv() is safe for use indefinitely,
+ * the implementation never frees assignment strings.
+ * This means that it is safe to pass a string literal.
+ * Despite the need to cast away `const`,
+ * passing a string literal to putenv() is probably the safest way to use it,
+ * because it ensures you can neither free nor modify the assignment;
+ * it's also cheap because it doesn't require any heap allocation.
+ * That said, this behavior is not guaranteed by POSIX,
+ * so portable code may prefer to always use heap-allocated assignment strings,
+ * or to let setenv() create them behind the scenes.
  */
 int putenv(char* _Nonnull __assignment);
 
@@ -100,13 +111,18 @@ int putenv(char* _Nonnull __assignment);
  * (If the environment variable already exists and `overwrite` is 0,
  * the environment is left unchanged and this is considered success.)
  *
- * This function is not thread safe:
- * 1. Calls to getenv() -- including those made by the implementation itself,
- *    such as <time.h> functions checking $TZ -- may crash if made while the
- *    environment is being modified.
- * 2. This function leaks memory (by allocating a new name=value string),
- *    but this does mean that the caller's pointers only need be valid and
- *    immutable for the duration of the call to setenv().
+ * This function is not thread safe.
+ *
+ * Calls to getenv() -- including those made by the implementation itself,
+ * such as <time.h> functions checking $TZ -- may crash if made while
+ * setenv() is modifying the environment.
+ *
+ * This function leaks memory (by allocating a new "name=value" string),
+ * but this does mean that the caller's pointers only need be valid and
+ * immutable for the duration of the call to setenv().
+ * It also means that putenv() is more efficient if both name and value
+ * are constants: you can pass putenv() a string literal
+ * of the form "name=value" to avoid heap allocation.
  */
 int setenv(const char* _Nonnull __name, const char* _Nonnull __value, int __overwrite);
 
@@ -116,12 +132,14 @@ int setenv(const char* _Nonnull __name, const char* _Nonnull __value, int __over
  *
  * Returns 0 on success and returns non-zero and sets `errno` on failure.
  *
- * This function is not thread safe:
- * 1. Calls to getenv() -- including those made by the implementation itself,
- *    such as <time.h> functions checking $TZ -- may crash if made while the
- *    environment is being modified.
- * 2. This function leaks memory rather than free anything so that pointers
- *    already handed out by getenv() are not invalidated.
+ * This function is not thread safe.
+ *
+ * Calls to getenv() -- including those made by the implementation itself,
+ * such as <time.h> functions checking $TZ -- may crash if made while
+ * unsetenv() is modifying the environment.
+ *
+ * This function leaks memory rather than free anything so that pointers
+ * already handed out by getenv() are not invalidated.
  */
 int unsetenv(const char* _Nonnull __name);
 
@@ -131,12 +149,14 @@ int unsetenv(const char* _Nonnull __name);
  *
  * Returns 0 on success and returns non-zero and sets `errno` on failure.
  *
- * This function is not thread safe:
- * 1. Calls to getenv() -- including those made by the implementation itself,
- *    such as <time.h> functions checking $TZ -- may crash if made while the
- *    environment is being modified.
- * 2. This function leaks memory rather than free anything so that pointers
- *    already handed out by getenv() are not invalidated.
+ * This function is not thread safe.
+ *
+ * Calls to getenv() -- including those made by the implementation itself,
+ * such as <time.h> functions checking $TZ -- may crash if made while
+ * clearenv() is modifying the environment.
+ *
+ * This function leaks memory rather than free anything so that pointers
+ * already handed out by getenv() are not invalidated.
  */
 int clearenv(void);
 
