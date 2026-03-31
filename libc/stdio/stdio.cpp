@@ -884,11 +884,12 @@ int asprintf(char** s, const char* fmt, ...) {
 // by using the required size returned by the first vsnprintf() to do a single
 // exact-size allocation followed by another call to vsnprintf().
 int vasprintf(char** s, const char* fmt, va_list ap) {
+  char buf[BUFSIZ] __attribute__((__uninitialized__));
   va_list ap2;
   va_copy(ap2, ap);
+  int n = vsnprintf(buf, sizeof(buf), fmt, ap2);
+  va_end(ap2);
 
-  char buf[BUFSIZ] __attribute__((__uninitialized__));
-  int n = vsnprintf(buf, sizeof(buf), fmt, ap);
   if (n == -1) return -1;
 
   char* result = static_cast<char*>(malloc(n + 1));
@@ -897,7 +898,7 @@ int vasprintf(char** s, const char* fmt, va_list ap) {
   if (n < static_cast<int>(sizeof(buf))) {
     memcpy(result, buf, n + 1);
   } else {
-    vsnprintf(result, n + 1, fmt, ap2);
+    vsnprintf(result, n + 1, fmt, ap);
   }
 
   *s = result;
