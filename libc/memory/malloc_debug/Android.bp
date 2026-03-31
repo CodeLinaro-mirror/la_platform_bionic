@@ -27,9 +27,6 @@ cc_library_static {
 
     export_include_dirs: ["."],
 
-    sanitize: {
-        never: true,
-    },
     native_coverage: false,
 
     // -Wno-error=format-zero-length needed for gcc to compile.
@@ -107,13 +104,9 @@ cc_library {
     ],
 
     apex_available: [
+        "//apex_available:platform",
         "com.android.runtime",
     ],
-    static: {
-        apex_available: [
-            "//apex_available:platform",
-        ],
-    },
 }
 
 // ==============================================================
