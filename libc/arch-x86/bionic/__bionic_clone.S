@@ -46,6 +46,7 @@ L(child):
         .cfi_undefined %eip
         .cfi_undefined %ebp
         xorl    %ebp, %ebp
+        # call+hlt rather than jmp to preserve the stack (mis)alignment.
         call    __start_thread
         hlt
 
@@ -111,6 +112,7 @@ L(bc3_child):
 
         pushl   %edi  # Push 'arg'
         pushl   %esi  # Push 'fn'
+        # call+hlt rather than jmp to preserve the stack (mis)alignment.
         call    __start_thread
         hlt
 
