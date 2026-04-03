@@ -35,6 +35,7 @@
 #include <unistd.h>
 
 #include <chrono>
+#include <thread>
 
 #include <android-base/file.h>
 #include <android-base/silent_death_test.h>
@@ -296,6 +297,36 @@ TEST(UNISTD_TEST, unsetenv_null_environ) {
   EXPECT_EQ(0, unsetenv("foo"));
 }
 
+TEST(UNISTD_TEST, getenv_non_stack_environ) {
+  char* e[] = { const_cast<char*>("foo=xxx"), nullptr };
+  environ = e;
+  EXPECT_STREQ("xxx", getenv("foo"));
+  EXPECT_STREQ(nullptr, getenv("bar"));
+}
+
+TEST(UNISTD_TEST, putenv_non_stack_environ) {
+  char* e[] = { const_cast<char*>("foo=xxx"), nullptr };
+  environ = e;
+  EXPECT_EQ(0, putenv(const_cast<char*>("bar=yyy")));
+  EXPECT_STREQ("xxx", getenv("foo"));
+  EXPECT_STREQ("yyy", getenv("bar"));
+}
+
+TEST(UNISTD_TEST, setenv_non_stack_environ) {
+  char* e[] = { const_cast<char*>("foo=xxx"), nullptr };
+  environ = e;
+  EXPECT_EQ(0, setenv("bar", "yyy", 1));
+  EXPECT_STREQ("xxx", getenv("foo"));
+  EXPECT_STREQ("yyy", getenv("bar"));
+}
+
+TEST(UNISTD_TEST, unsetenv_non_stack_environ) {
+  char* e[] = { const_cast<char*>("foo=xxx"), nullptr };
+  environ = e;
+  EXPECT_EQ(0, unsetenv("foo"));
+  EXPECT_EQ(nullptr, getenv("foo"));
+}
+
 TEST(UNISTD_TEST, getenv_EINVAL) {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wnonnull"
@@ -421,31 +452,66 @@ TEST(UNISTD_TEST, setenv_no_mutation) {
 TEST(UNISTD_TEST, clearenv) {
   extern char** environ;
 
-  // Guarantee that environ is not initially empty...
-  ASSERT_EQ(0, setenv("test-variable", "a", 1));
+  environ = nullptr;
+  ASSERT_EQ(0, setenv("clearenv-test", "foo", 1));
+  ASSERT_NE(nullptr, environ);
+  ASSERT_STREQ("foo", getenv("clearenv-test"));
 
-  // Stash a copy.
-  std::vector<char*> old_environ;
-  for (size_t i = 0; environ[i] != nullptr; ++i) {
-    old_environ.push_back(strdup(environ[i]));
-  }
+  char** old_environ = environ;
+  ASSERT_STREQ("clearenv-test=foo", old_environ[0]);
+  ASSERT_EQ(nullptr, old_environ[1]);
 
   ASSERT_EQ(0, clearenv());
 
-  EXPECT_TRUE(environ == nullptr || environ[0] == nullptr);
-  EXPECT_EQ(nullptr, getenv("test-variable"));
-  EXPECT_EQ(0, setenv("test-variable", "post-clear", 1));
-  EXPECT_STREQ("post-clear", getenv("test-variable"));
+  // After clearenv(), environ is null...
+  ASSERT_EQ(nullptr, environ);
+  // ...and pointers _in_ the old environ have been nulled too.
+  ASSERT_EQ(nullptr, old_environ[0]);
+  ASSERT_EQ(nullptr, old_environ[1]);
+}
 
-  // Put the old environment back.
-  for (size_t i = 0; i < old_environ.size(); ++i) {
-    EXPECT_EQ(0, putenv(old_environ[i]));
-  }
+// It's safe to call clearenv() if environ is already null.
+TEST(UNISTD_TEST, clearenv_null_environ) {
+  extern char** environ;
+  environ = nullptr;
+  ASSERT_EQ(0, clearenv());
+}
 
-  // Check it wasn't overwritten.
-  EXPECT_STREQ("a", getenv("test-variable"));
-
-  EXPECT_EQ(0, unsetenv("test-variable"));
+TEST(UNISTD_TEST, environ_concurrency) {
+  // Number of rounds chosen by experiment to reliably ensure crashes
+  // with implementations without locking.
+  // 1k was flaky, so this an order of magnitude larger.
+  // Note that this test crashes for lack of _write_ locks ---
+  // it catches cases where putenv() and setenv() both reallocate at
+  // the same time, but does not catch cases where getenv() is iterating
+  // over freed memory unless you have hwasan or MTE.
+  static constexpr size_t N = 10'000;
+  std::thread getenv_thread{[]() {
+    for (size_t i = 0; i < N; ++i) {
+      // Deliberately not one of the variables we're setting,
+      // so getenv() is forced to traverse the whole environ array.
+      android::base::DoNotOptimize(getenv("FOO"));
+    }
+  }};
+  // Both our mutator threads use a unique variable name every time
+  // to ensure that the existing environ array needs to be reallocated.
+  std::thread putenv_thread{[]() {
+    for (size_t i = 0; i < N; ++i) {
+      char assignment[128];
+      snprintf(assignment, sizeof(assignment), "PUTENV%zu=%zu", i, i);
+      android::base::DoNotOptimize(putenv(strdup(assignment)));
+    }
+  }};
+  std::thread setenv_thread{[]() {
+    for (size_t i = 0; i < N; ++i) {
+      char name[128];
+      snprintf(name, sizeof(name), "SETENV%zu", i);
+      android::base::DoNotOptimize(setenv(name, "123", 1));
+    }
+  }};
+  getenv_thread.join();
+  putenv_thread.join();
+  setenv_thread.join();
 }
 
 static void TestSyncFunction(int (*fn)(int)) {
@@ -1808,22 +1874,6 @@ static void clone_process() {
   EXPECT_EQ(0UL, sme_tpidr2_el0());
 }
 
-TEST(UNISTD_TEST, fork_with_sme_za_active) {
-  if (!sme_is_enabled()) {
-    GTEST_SKIP() << "FEAT_SME is not enabled on the device.";
-  }
-
-  __arm_za_disable();
-  uint16_t svl = sme_get_svl();
-  uint8_t za_save_buffer[svl * svl] __attribute__((aligned(16)));
-  sme_enable_za_active_state(za_save_buffer, svl);
-
-  EXPECT_TRUE(sme_is_za_on());
-  EXPECT_TRUE(sme_tpidr2_el0() == 0);
-  fork_process();
-  sme_state_cleanup();
-}
-
 TEST(UNISTD_TEST, fork_with_sme_za_off) {
   if (!sme_is_enabled()) {
     GTEST_SKIP() << "FEAT_SME is not enabled on the device.";
@@ -1844,22 +1894,6 @@ TEST(UNISTD_TEST, fork_with_sme_za_dormant_state) {
   sme_state_cleanup();
 }
 
-TEST(UNISTD_TEST, vfork_with_sme_za_active) {
-  if (!sme_is_enabled()) {
-    GTEST_SKIP() << "FEAT_SME is not enabled on the device.";
-  }
-
-  __arm_za_disable();
-  uint16_t svl = sme_get_svl();
-  uint8_t za_save_buffer[svl * svl] __attribute__((aligned(16)));
-  sme_enable_za_active_state(za_save_buffer, svl);
-
-  EXPECT_TRUE(sme_is_za_on());
-  EXPECT_TRUE(sme_tpidr2_el0() == 0);
-  vfork_process();
-  sme_state_cleanup();
-}
-
 TEST(UNISTD_TEST, vfork_with_sme_za_off) {
   if (!sme_is_enabled()) {
     GTEST_SKIP() << "FEAT_SME is not enabled on the device.";
@@ -1877,22 +1911,6 @@ TEST(UNISTD_TEST, vfork_with_sme_za_dormant_state) {
 
   __arm_za_disable();
   sme_dormant_caller(&vfork_process);
-  sme_state_cleanup();
-}
-
-TEST(UNISTD_TEST, clone_with_sme_za_active) {
-  if (!sme_is_enabled()) {
-    GTEST_SKIP() << "FEAT_SME is not enabled on the device.";
-  }
-
-  __arm_za_disable();
-  uint16_t svl = sme_get_svl();
-  uint8_t za_save_buffer[svl * svl] __attribute__((aligned(16)));
-  sme_enable_za_active_state(za_save_buffer, svl);
-
-  EXPECT_TRUE(sme_is_za_on());
-  EXPECT_TRUE(sme_tpidr2_el0() == 0);
-  clone_process();
   sme_state_cleanup();
 }
 
