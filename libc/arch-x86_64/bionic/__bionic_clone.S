@@ -64,7 +64,6 @@ L(bc_child):
         # the appropriate registers.
         popq    %rdi  # fn
         popq    %rsi  # arg
-        # call+hlt rather than jmp to preserve the stack (mis)alignment.
         call    __start_thread
         hlt
 END(__bionic_clone)
@@ -94,7 +93,6 @@ L(bc3_child):
 
         movq    %rdx, %rdi
         movq    %r8, %rsi
-        # call+hlt rather than jmp to preserve the stack (mis)alignment.
         call    __start_thread
         hlt
 END(__bionic_clone3)
