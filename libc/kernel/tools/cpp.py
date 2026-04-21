@@ -26,6 +26,12 @@ from clang.cindex import TokenGroup
 from clang.cindex import TokenKind
 from clang.cindex import TranslationUnit
 
+# Compatibility for older versions of libclang that don't have Cursor.is_null()
+if not hasattr(clang.cindex.Cursor, 'is_null'):
+    def is_null(self):
+        return self.kind == clang.cindex.CursorKind.INVALID_FILE
+    clang.cindex.Cursor.is_null = is_null
+
 # Set up LD_LIBRARY_PATH to include libclang.so, libLLVM.so, and etc.
 # Note that setting LD_LIBRARY_PATH with os.putenv() sometimes doesn't help.
 clang.cindex.Config.set_library_file(os.path.join(top, 'prebuilts/clang/host/linux-x86/clang-stable/lib/libclang.so'))
