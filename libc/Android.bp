@@ -1629,6 +1629,12 @@ cc_library_headers {
         "//system/memory/libmemunreachable:__subpackages__",
         "//system/unwinding/libunwindstack:__subpackages__",
         "//tools/security/sanitizer-status:__subpackages__",
+        // Soong disallows modules outside //vendor from naming specific paths
+        // inside //vendor — only the umbrella "//vendor:__subpackages__" is
+        // permitted. The QTI fuzzer (vendor/qcom/proprietary/fuzzer-security-
+        // tests/fuzzer/sanitizer_inplace) needs bionic_libc_platform_headers
+        // on the sa2390_au automotive bring-up.
+        "//vendor:__subpackages__",
     ],
     vendor_available: true,
     product_available: true,
